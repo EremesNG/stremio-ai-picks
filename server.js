@@ -275,7 +275,7 @@ async function refreshTraktToken(username, refreshToken) {
     }
 
     const tokenData = await response.json();
-    await storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
+    storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
     logger.info(`Successfully refreshed and stored new Trakt token for user: ${username}`);
 
     return {
@@ -348,7 +348,7 @@ const getConfiguredManifest = (geminiKey, tmdbKey) => ({
 
 async function startServer() {
   try {
-    await initDb();
+    initDb();
     // Load caches from files on startup
     await loadCachesFromFiles();
     const { purgeEmptyAiCacheEntries } = require("./addon");
@@ -632,7 +632,7 @@ async function startServer() {
 
               // If user is configured with Trakt, get and refresh tokens if needed
               if (decryptedConfig.traktUsername) {
-                let tokenData = await getTokens(decryptedConfig.traktUsername);
+                let tokenData = getTokens(decryptedConfig.traktUsername);
                 if (tokenData) {
                   // Check if token is expired (with a 5-minute buffer)
                   if (tokenData.expires_at < Date.now() - 5 * 60 * 1000) {
@@ -1388,7 +1388,7 @@ async function startServer() {
 
         // If Trakt data is present, store it in the database
         if (traktAuthData && traktAuthData.username) {
-          await storeTokens(
+          storeTokens(
             traktAuthData.username,
             traktAuthData.accessToken,
             traktAuthData.refreshToken,
@@ -1588,7 +1588,7 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
 
     // If a username is provided, this is a health check. Get the token from the DB.
     if (traktUsername) {
-      const tokenData = await getTokens(traktUsername);
+      const tokenData = getTokens(traktUsername);
       if (tokenData && tokenData.access_token) {
         tokenToCheck = tokenData.access_token;
       } else {

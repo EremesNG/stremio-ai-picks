@@ -6,19 +6,26 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "start": "node server.js",
-    "start:dev": "ENABLE_LOGGING=true node server.js"
+    "start:dev": "cross-env ENABLE_LOGGING=true node server.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^12.9.0",
     "compression": "^1.7.4",
     "dotenv": "^16.3.1",
     "express": "^4.18.x",
     "express-rate-limit": "^7.1.5",
     "lru-cache": "^10.0.1",
     "node-fetch": "^2.7.x",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
     "stremio-addon-sdk": "^1.6.10"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   },
   "engines": {
     "node": ">=16.0.0"
