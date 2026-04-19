@@ -51,7 +51,7 @@ Env is loaded via `dotenv` (gracefully skipped if `.env` is absent).
 - **SQLite**: `trakt_tokens.db` stores Trakt OAuth tokens. Created automatically by `database.js`. Gitignored.
 - **Trakt OAuth**: Full OAuth callback flow implemented in `server.js` (authorization URL → callback → token exchange → DB storage).
 - **Admin endpoints**: Cache management routes protected by `ADMIN_TOKEN` query parameter.
-- **Static files**: Served from `public/` at both `/` and `/aisearch` paths.
+- **Static files**: Served from `public/` at `/`.
 
 ## AI Agent Loop (`utils/agent.js`)
 
@@ -72,7 +72,7 @@ The Gemini recommendation agent uses a turn-based function-calling loop. Key fac
 - State is DOM-centric; Trakt auth state uses hidden inputs + `sessionStorage` during OAuth redirect.
 - Hydration of existing config: `fetch` call on `DOMContentLoaded` when a config ID is in the URL.
 - **HomepageQuery separator**: Uses `|||` as the multi-entry delimiter (NOT comma). Commas inside query text are safe. Parsing is in three places: `configure.html`, `addon.js`, and `server.js` — all must stay in sync.
-- Backend endpoints used by the page: `/aisearch/encrypt` (generate install URL), `/aisearch/validate` (validate config).
+- Backend endpoints used by the page: `/encrypt` (generate install URL), `/validate` (validate config).
 
 ## Deployment
 

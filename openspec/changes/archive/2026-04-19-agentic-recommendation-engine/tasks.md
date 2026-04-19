@@ -133,7 +133,7 @@ Architecture: agent proposes candidates with verifiable IDs; orchestrator determ
   Run: `node --check addon.js`
   Expected: syntax valid; recommendation branch no longer aborts the whole request when `discoverTypeAndGenres` throws.
 
-- [x] 7.10 Guard remaining Gemini `generateContent` call sites in `addon.js` at the linear-path locations (around lines 3692 and 3763) and at `addon.js:4313` (getAiSearch) with try/catch so request no longer crashes when `withRetry` exhausts its attempts on 503. On failure: log at `warn` level, return an empty/sensible fallback response (empty metas array for catalog path, empty suggestions for search path) rather than propagating 500 to Stremio.
+- [x] 7.10 Guard remaining Gemini `generateContent` call sites in `addon.js` at the linear-path locations (around lines 3692 and 3763) and at `addon.js:4313` (getAiPicks) with try/catch so request no longer crashes when `withRetry` exhausts its attempts on 503. On failure: log at `warn` level, return an empty/sensible fallback response (empty metas array for catalog path, empty suggestions for search path) rather than propagating 500 to Stremio.
   Verification:
   Run: `node --check addon.js`
   Expected: syntax valid; no Gemini call in the hot request paths can propagate an unhandled throw to Express.

@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="public/logo.png" alt="AI Search" width="120" height="120" style="background: #2a2a2a; border-radius: 20px; padding: 20px;"/>
+  <img src="public/logo.png" alt="AI Picks" width="120" height="120" style="background: #2a2a2a; border-radius: 20px; padding: 20px;"/>
 </div>
 
-# Stremio AI Search
+# Stremio AI Picks
 
 An intelligent search addon for Stremio powered by Google's Gemini AI. Get personalized movie and TV series recommendations based on natural language queries.
 
-<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio.itcon.au%2Faisearch%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
+<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio-ai-picks.eremesng.com%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
 
 ## Features
 
@@ -22,7 +22,7 @@ An intelligent search addon for Stremio powered by Google's Gemini AI. Get perso
 
 ## Installation
 
-1. Visit [Addon configuration](https://stremio.itcon.au/aisearch/configure)
+1. Visit [Addon configuration](https://stremio-ai-picks.eremesng.com/configure)
 2. Enter your API keys
 3. Provide optional parameters
 4. Install
@@ -495,61 +495,61 @@ All endpoints are GET requests and require the `adminToken` as a query parameter
 #### Cache Statistics
 
 ```bash
-GET https://stremio.itcon.au/aisearch/cache/stats?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/stats?adminToken=your-admin-token
 ```
 
 #### AI Cache Management
 
 ```bash
 # Clear all AI cache
-GET https://stremio.itcon.au/aisearch/cache/clear/ai?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/ai?adminToken=your-admin-token
 
 # Remove specific AI cache entries by keywords
-GET https://stremio.itcon.au/aisearch/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=ocean%20thriller
+GET https://stremio-ai-picks.eremesng.com/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=ocean%20thriller
 
 # Purge all empty AI recommendation entries from the cache
-GET https://stremio.itcon.au/aisearch/cache/purge/ai-empty?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/purge/ai-empty?adminToken=your-admin-token
 ```
 
 #### TMDB Cache Management
 
 ```bash
 # Clear TMDB cache
-GET https://stremio.itcon.au/aisearch/cache/clear/tmdb?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb?adminToken=your-admin-token
 
 # Clear TMDB details cache
-GET https://stremio.itcon.au/aisearch/cache/clear/tmdb-details?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb-details?adminToken=your-admin-token
 
 # Clear TMDB discover cache
-GET https://stremio.itcon.au/aisearch/cache/clear/tmdb-discover?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb-discover?adminToken=your-admin-token
 
 # List all TMDB discover cache keys
-GET https://stremio.itcon.au/aisearch/cache/list/tmdb-discover?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/list/tmdb-discover?adminToken=your-admin-token
 
 # Remove a specific TMDB discover cache item
-GET https://stremio.itcon.au/aisearch/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
 ```
 
 #### Other Cache Management
 
 ```bash
 # Clear RPDB cache
-GET https://stremio.itcon.au/aisearch/cache/clear/rpdb?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/rpdb?adminToken=your-admin-token
 
 # Clear Trakt cache
-GET https://stremio.itcon.au/aisearch/cache/clear/trakt?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/trakt?adminToken=your-admin-token
 
 # Clear Trakt raw data cache
-GET https://stremio.itcon.au/aisearch/cache/clear/trakt-raw?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/trakt-raw?adminToken=your-admin-token
 
 # Clear query analysis cache
-GET https://stremio.itcon.au/aisearch/cache/clear/query-analysis?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/query-analysis?adminToken=your-admin-token
 
 # Clear all caches
-GET https://stremio.itcon.au/aisearch/cache/clear/all?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/all?adminToken=your-admin-token
 
 # Save all caches to files
-GET https://stremio.itcon.au/aisearch/cache/save?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/save?adminToken=your-admin-token
 ```
 
 ### Example Usage
@@ -557,12 +557,12 @@ GET https://stremio.itcon.au/aisearch/cache/save?adminToken=your-admin-token
 You can use these endpoints directly in your browser by visiting:
 
 ```
-https://stremio.itcon.au/aisearch/cache/clear/ai?adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=your search terms
-https://stremio.itcon.au/aisearch/cache/purge/ai-empty?adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/list/tmdb-discover?adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/clear/all?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/clear/ai?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=your search terms
+https://stremio-ai-picks.eremesng.com/cache/purge/ai-empty?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/list/tmdb-discover?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/clear/all?adminToken=your-admin-token
 ```
 
 ### Response Examples

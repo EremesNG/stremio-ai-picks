@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-The utils directory provides core infrastructure for the Stremio AI Search addon: agent orchestration (turn-based Gemini loop with tool dispatch), external API integration (Trakt.tv, TMDB), resilience patterns (exponential backoff retry), and centralized logging. These modules form the backbone of recommendation generation and data normalization.
+The utils directory provides core infrastructure for the Stremio AI Picks addon: agent orchestration (turn-based Gemini loop with tool dispatch), external API integration (Trakt.tv, TMDB), resilience patterns (exponential backoff retry), and centralized logging. These modules form the backbone of recommendation generation and data normalization.
 
 ## Modules
 

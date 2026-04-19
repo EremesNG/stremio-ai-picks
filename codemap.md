@@ -1,4 +1,4 @@
-# Repository Atlas: stremio-ai-search
+# Repository Atlas: stremio-ai-picks
 
 ## Project Responsibility
 AI-powered Stremio addon that delivers personalized movie and series recommendations through natural language queries. Integrates Google Gemini AI for intelligent query interpretation, TMDB for media metadata, and Trakt.tv for user watch history and ratings. Encrypts user configuration in URL segments and maintains persistent LRU caches for performance.
@@ -58,7 +58,7 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 
 | File | Role | Key Exports/Patterns |
 |------|------|----------------------|
-| **server.js** | Express HTTP server, request routing, Trakt OAuth flow, static file serving, admin cache management, graceful shutdown | Middleware chain (logging, platform detection, rate limiting); routes: `/aisearch/*` (addon), `/oauth/callback`, `/api/getConfig/:configId`, `/api/decrypt-config`, `/cache/save`, `/stats/*`, `/oauth/refresh` |
+| **server.js** | Express HTTP server, request routing, Trakt OAuth flow, static file serving, admin cache management, graceful shutdown | Middleware chain (logging, platform detection, rate limiting); routes: `/*` (addon), `/oauth/callback`, `/api/getConfig/:configId`, `/api/decrypt-config`, `/cache/save`, `/stats/*`, `/oauth/refresh` |
 | **addon.js** | Core Stremio addon logic, catalog/meta/stream handlers, AI agent integration, LRU caching, config parsing | `addonInterface`, `catalogHandler`, `metaHandler`, `streamHandler`, `SimpleLRUCache`, `purgeEmptyAiCacheEntries`; reads `DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"`, `FilterWatched`, `MaxTurns`, `HomepageQuery` |
 | **database.js** | SQLite token storage for Trakt OAuth tokens | `initDb`, `storeTokens`, `getTokens`; singleton DB connection, prepared statements, auto-created `trakt_tokens.db` |
 | **Dockerfile** | Container build specification | Node 23 base, corepack + pnpm, port 7000, NODE_ENV=production |

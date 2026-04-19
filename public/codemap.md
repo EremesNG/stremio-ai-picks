@@ -1,7 +1,7 @@
 # public/
 
 ## Responsibility
-Serves the user-facing configuration dashboard (`configure.html`) and static assets for the Stremio AI Search addon. The configuration interface collects API credentials, model preferences, homepage customization, and integration settings, validates them server-side, encrypts the configuration, and produces installation URLs for Stremio.
+Serves the user-facing configuration dashboard (`configure.html`) and static assets for the Stremio AI Picks addon. The configuration interface collects API credentials, model preferences, homepage customization, and integration settings, validates them server-side, encrypts the configuration, and produces installation URLs for Stremio.
 
 ## Files
 
@@ -25,9 +25,9 @@ Serves the user-facing configuration dashboard (`configure.html`) and static ass
 
 **Flow**:
 1. User fills form fields (API keys, model, rows, integrations, preferences)
-2. `validateApiKeys` → POST `/aisearch/validate` with Gemini + TMDB keys → server validates and returns success/error
+2. `validateApiKeys` → POST `/validate` with Gemini + TMDB keys → server validates and returns success/error
 3. `getAddonUrl` → gathers all form values into `{ configData, traktAuthData }` object
-4. POST `/aisearch/encrypt` with `configData` → server encrypts and returns encrypted config ID
+4. POST `/encrypt` with `configData` → server encrypts and returns encrypted config ID
 5. Config ID embedded in two installation URLs: `stremio://` (direct) and `https://` (web fallback)
 6. User copies URL and installs addon in Stremio
 
@@ -46,7 +46,7 @@ Serves the user-facing configuration dashboard (`configure.html`) and static ass
 - Trakt OAuth tokens (stored in sessionStorage, passed separately to backend)
 
 **Integration**:
-- Backend endpoints: `/aisearch/validate` (POST), `/aisearch/encrypt` (POST)
+- Backend endpoints: `/validate` (POST), `/encrypt` (POST)
 - External services: Google AI Studio (Gemini API), TMDB, Trakt.tv OAuth, RPDB, Fanart.tv
 - Session storage: Trakt OAuth tokens cached in `sessionStorage` for UI state (FilterWatched visibility)
 
@@ -54,11 +54,11 @@ Serves the user-facing configuration dashboard (`configure.html`) and static ass
 ```
 User Input (Form)
   ↓
-validateApiKeys() → POST /aisearch/validate
+validateApiKeys() → POST /validate
   ↓ (success)
 getAddonUrl() → collect all form values into configData
   ↓
-POST /aisearch/encrypt { configData }
+POST /encrypt { configData }
   ↓ (returns encrypted ID)
 Embed encrypted ID in stremio:// and https:// URLs
   ↓
@@ -68,8 +68,8 @@ User copies URL → installs addon in Stremio
 ## Integration Map
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/aisearch/validate` | POST | Validate Gemini + TMDB API keys |
-| `/aisearch/encrypt` | POST | Encrypt configuration object, return config ID |
+| `/validate` | POST | Validate Gemini + TMDB API keys |
+| `/encrypt` | POST | Encrypt configuration object, return config ID |
 
 | External Service | Used For |
 |------------------|----------|
