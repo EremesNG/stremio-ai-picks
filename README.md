@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="public/logo.png" alt="AI Search" width="120" height="120" style="background: #2a2a2a; border-radius: 20px; padding: 20px;"/>
+  <img src="public/logo.png" alt="AI Picks" width="120" height="120" style="background: #2a2a2a; border-radius: 20px; padding: 20px;"/>
 </div>
 
-# Stremio AI Search
+# Stremio AI Picks
 
 An intelligent search addon for Stremio powered by Google's Gemini AI. Get personalized movie and TV series recommendations based on natural language queries.
 
-<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio.itcon.au%2Faisearch%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
+<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio-ai-picks.eremesng.com%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
 
 ## Features
 
@@ -22,13 +22,13 @@ An intelligent search addon for Stremio powered by Google's Gemini AI. Get perso
 
 ## Installation
 
-1. Visit [Addon configuration](https://stremio.itcon.au/aisearch/configure)
+1. Visit [Addon configuration](https://stremio-ai-picks.eremesng.com/configure)
 2. Enter your API keys
 3. Provide optional parameters
 4. Install
 5. Buy me a coffee :)
    <br/><br/>
-   <a href="https://buymeacoffee.com/itcon">
+   <a href="https://buymeacoffee.com/eremesng">
    <img src="public/bmc.png" alt="Buy Me A Coffee" height="40" />
    </a>
 
@@ -456,17 +456,33 @@ Here are some examples showing how versatile this addon is.
 
 ### Environment Variables
 
-When self-hosting the addon, you can configure the following environment variables in a `.env` file:
+A ready-to-use template lives at [`.env.example`](./.env.example) in the repository root. Copy it to `.env` and fill in the values:
 
-- `HOST` - Your domain/hostname without protocol (e.g., `example.com` or `localhost:7000`)
-- `TRAKT_CLIENT_ID` - Your Trakt API client ID
-- `TRAKT_CLIENT_SECRET` - Your Trakt API client secret
-- `ENCRYPTION_KEY` - Key used for encrypting sensitive configuration data
-- `RPDB_API_KEY` - API key for RPDB integration
-- `ENABLE_LOGGING` - Set to "true" to enable logging
-- `GITHUB_TOKEN` - GitHub token for issue submission
-- `RECAPTCHA_SECRET_KEY` - Secret key for reCAPTCHA
-- `ADMIN_TOKEN` - Token required for accessing cache management endpoints (new)
+```bash
+cp .env.example .env
+```
+
+> **Note on end-user API keys.** Google Gemini and TMDB keys are **not** server-side environment variables. Each addon user enters them on the `/configure` page; the values are encrypted with `ENCRYPTION_KEY` (AES-256-CBC) and travel as an encrypted segment in the manifest URL. See `utils/crypto.js` and `public/configure.html`.
+
+#### Required
+
+| Variable | Purpose |
+| --- | --- |
+| `ENCRYPTION_KEY` | AES-256-CBC key used to encrypt user configuration. **Must be at least 32 characters** — the server exits on startup otherwise. Generate one with `openssl rand -hex 32`. |
+| `HOST` | Public domain of the addon, without protocol (e.g. `my-addon.example.com`). Used to build manifest URLs and the Trakt OAuth callback. |
+| `TRAKT_CLIENT_ID` | Trakt.tv OAuth application client ID. Create one at <https://trakt.tv/oauth/applications>. |
+| `TRAKT_CLIENT_SECRET` | Trakt.tv OAuth application client secret. The OAuth redirect URI must match `https://${HOST}/callback`. |
+
+#### Optional
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RPDB_API_KEY` | — | Rating Poster DB key. Adds rating overlays on posters. Get one at <https://ratingposterdb.com/>. |
+| `FANART_API_KEY` | — | Fanart.tv key. Enables additional artwork (logos, clearart, etc.). Get one at <https://fanart.tv/get-an-api-key/>. |
+| `ADMIN_TOKEN` | `change-me-in-env-file` | Protects the `/cache/*` administration endpoints. **Change this in any public deployment** — the default is intentionally insecure. |
+| `ENABLE_LOGGING` | `false` | Enables verbose logging. Must be the literal string `"true"`; any other value (`1`, `yes`, `on`) is treated as `false`. |
+| `GITHUB_TOKEN` | — | GitHub Personal Access Token with `repo` or `public_repo` scope. Required only if you enable the in-app issue reporting form. |
+| `RECAPTCHA_SECRET_KEY` | — | Google reCAPTCHA v2/v3 secret. Validates the issue reporting form to prevent spam. Get one at <https://www.google.com/recaptcha/admin>. |
 
 ### Admin Endpoints
 
@@ -479,61 +495,61 @@ All endpoints are GET requests and require the `adminToken` as a query parameter
 #### Cache Statistics
 
 ```bash
-GET https://stremio.itcon.au/aisearch/cache/stats?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/stats?adminToken=your-admin-token
 ```
 
 #### AI Cache Management
 
 ```bash
 # Clear all AI cache
-GET https://stremio.itcon.au/aisearch/cache/clear/ai?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/ai?adminToken=your-admin-token
 
 # Remove specific AI cache entries by keywords
-GET https://stremio.itcon.au/aisearch/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=ocean%20thriller
+GET https://stremio-ai-picks.eremesng.com/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=ocean%20thriller
 
 # Purge all empty AI recommendation entries from the cache
-GET https://stremio.itcon.au/aisearch/cache/purge/ai-empty?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/purge/ai-empty?adminToken=your-admin-token
 ```
 
 #### TMDB Cache Management
 
 ```bash
 # Clear TMDB cache
-GET https://stremio.itcon.au/aisearch/cache/clear/tmdb?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb?adminToken=your-admin-token
 
 # Clear TMDB details cache
-GET https://stremio.itcon.au/aisearch/cache/clear/tmdb-details?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb-details?adminToken=your-admin-token
 
 # Clear TMDB discover cache
-GET https://stremio.itcon.au/aisearch/cache/clear/tmdb-discover?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb-discover?adminToken=your-admin-token
 
 # List all TMDB discover cache keys
-GET https://stremio.itcon.au/aisearch/cache/list/tmdb-discover?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/list/tmdb-discover?adminToken=your-admin-token
 
 # Remove a specific TMDB discover cache item
-GET https://stremio.itcon.au/aisearch/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
 ```
 
 #### Other Cache Management
 
 ```bash
 # Clear RPDB cache
-GET https://stremio.itcon.au/aisearch/cache/clear/rpdb?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/rpdb?adminToken=your-admin-token
 
 # Clear Trakt cache
-GET https://stremio.itcon.au/aisearch/cache/clear/trakt?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/trakt?adminToken=your-admin-token
 
 # Clear Trakt raw data cache
-GET https://stremio.itcon.au/aisearch/cache/clear/trakt-raw?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/trakt-raw?adminToken=your-admin-token
 
 # Clear query analysis cache
-GET https://stremio.itcon.au/aisearch/cache/clear/query-analysis?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/query-analysis?adminToken=your-admin-token
 
 # Clear all caches
-GET https://stremio.itcon.au/aisearch/cache/clear/all?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/clear/all?adminToken=your-admin-token
 
 # Save all caches to files
-GET https://stremio.itcon.au/aisearch/cache/save?adminToken=your-admin-token
+GET https://stremio-ai-picks.eremesng.com/cache/save?adminToken=your-admin-token
 ```
 
 ### Example Usage
@@ -541,12 +557,12 @@ GET https://stremio.itcon.au/aisearch/cache/save?adminToken=your-admin-token
 You can use these endpoints directly in your browser by visiting:
 
 ```
-https://stremio.itcon.au/aisearch/cache/clear/ai?adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=your search terms
-https://stremio.itcon.au/aisearch/cache/purge/ai-empty?adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/list/tmdb-discover?adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
-https://stremio.itcon.au/aisearch/cache/clear/all?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/clear/ai?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=your search terms
+https://stremio-ai-picks.eremesng.com/cache/purge/ai-empty?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/list/tmdb-discover?adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
+https://stremio-ai-picks.eremesng.com/cache/clear/all?adminToken=your-admin-token
 ```
 
 ### Response Examples

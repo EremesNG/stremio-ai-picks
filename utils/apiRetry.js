@@ -5,8 +5,8 @@ const logger = require("./logger");
  *
  * @param {Function} apiCallFn - Async function that makes the API call
  * @param {Object} options - Configuration options
- * @param {number} options.maxRetries - Maximum number of retry attempts (default: 3)
- * @param {number} options.initialDelay - Initial delay in ms before first retry (default: 1000)
+ * @param {number} options.maxRetries - Maximum number of retry attempts (default: 6)
+  * @param {number} options.initialDelay - Initial delay in ms before first retry (default: 1500)
  * @param {number} options.maxDelay - Maximum delay in ms between retries (default: 10000)
  * @param {Function} options.shouldRetry - Function to determine if error is retryable (default: all non-4xx errors)
  * @param {string} options.operationName - Name of operation for logging (default: "API call")
@@ -14,8 +14,8 @@ const logger = require("./logger");
  */
 async function withRetry(apiCallFn, options = {}) {
   const {
-    maxRetries = 3,
-    initialDelay = 1000,
+    maxRetries = 6,
+    initialDelay = 1500,
     maxDelay = 10000,
     shouldRetry = (error) => {
       // By default, retry on network errors and 5xx responses

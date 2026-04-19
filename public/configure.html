@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>AI Search Addon Configuration</title>
+    <title>AI Picks Addon Configuration</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
       :root {
@@ -528,19 +528,56 @@
         border: 1px solid rgba(255, 68, 68, 0.3);
         color: #ff4444;
       }
+      .catalog-row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+        align-items: center;
+      }
+      .catalog-row input[type="text"] {
+        margin: 0;
+        width: 100%;
+      }
+      .catalog-title {
+        flex: 3;
+      }
+      .catalog-query {
+        flex: 6;
+      }
+      .catalog-remove {
+        flex: 1;
+        background: #ff4444;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        padding: 0;
+        margin: 0;
+        min-width: 34px;
+        width: auto;
+      }
+      .catalog-remove:hover {
+        background: #cc0000;
+        transform: none;
+      }
     </style>
   </head>
   <body>
     <div class="container">
-      <img src="logo.png" alt="AI Search" class="logo" />
-      <h1>Stremio AI Search</h1>
+      <img src="logo.png" alt="AI Picks" class="logo" />
+      <h1>Stremio AI Picks</h1>
 
-      <div style="text-align: center; margin-bottom: 20px">
-        <img
-          src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio.itcon.au%2Faisearch%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue"
-          alt="Stremio AI Search Queries"
-        />
-      </div>
+       <div style="text-align: center; margin-bottom: 20px">
+          <img
+            src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FEremesNG%2Fstremio-ai-picks%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue"
+            alt="Stremio AI Picks Queries"
+          />
+       </div>
 
       <form id="configForm">
         <!-- Basic Configuration (Always Visible) -->
@@ -636,10 +673,14 @@
 
           <!-- Custom Homepage Query Input - Initially Hidden -->
           <div class="form-group" id="homepageQueryGroup" style="display: none;">
-              <label class="form-label" for="homepageQuery">Custom Homepage Catalogs (Optional)</label>
-              <input type="text" id="homepageQuery" placeholder="e.g., Mystery:recommend mystery, Sports:recommend sports movies">
+              <label class="form-label">Custom Homepage Catalogs (Optional)</label>
+              <div id="catalogRowsContainer">
+                <!-- Rows will be added here dynamically -->
+              </div>
+              <button type="button" class="secondary-button" onclick="addCatalogRow()" style="width: auto; margin-top: 10px; margin-left: 0;">+ Add Catalog</button>
+              <input type="hidden" id="homepageQuery" value="">
               <div class="help-text">
-                  Enter a comma-separated list of catalogs in the format <b>Title:Query</b>. Each entry will create a new catalog on your homepage. e.g. `Mystery:recommend mystery thrillers,Sports:recommend sports movies` gives three catalogs titled "Mystery - Movie", "Mystery - Series", and "Sports - Movie". To show only movies for a query, add the word "movies" to it (e.g., `Thriller:thriller movies`). This prevents a series catalog from appearing for that query. To use Trakt recommendations add 'Recommend' keyword in the query (e.g., `Top Rated:recommend top rated movies`). For new content, use 'New' keyword (e.g., `New Releases:new action movies`).
+                  Add custom catalogs to your homepage. Each catalog needs a Title and an AI search query. e.g. Title: "Mystery", Query: "recommend mystery thrillers". To show only movies for a query, add the word "movies" to it (e.g., "thriller movies"). To use Trakt recommendations add 'Recommend' keyword in the query. For new content, use 'New' keyword.
               </div>
           </div>
 
@@ -736,6 +777,17 @@
             </div>
           </div>
 
+          <!-- Filter Watched Items -->
+          <div class="form-group" id="filterWatchedGroup" style="display: none;">
+            <div class="checkbox-container">
+              <input type="checkbox" id="filterWatched" checked />
+              <label for="filterWatched">Filter out watched/rated items</label>
+            </div>
+            <div class="help-text">
+              When enabled, the AI agent will check your Trakt watch history to avoid recommending items you've already seen.
+            </div>
+          </div>
+
           <div class="form-group">
             <label class="form-label" for="tmdbLanguage"
               >Content Language</label
@@ -828,14 +880,23 @@
             <label class="form-label" for="geminiModel"
               >Gemini Model Name</label
             >
-            <input
-              type="text"
-              id="geminiModel"
-              placeholder="Enter model name (e.g., gemini-2.0-flash-lite)"
-              value="gemini-2.5-flash-lite"
-            />
+            <select id="geminiModel" class="form-select">
+              <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+              <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+              <option value="gemini-pro-latest">gemini-pro-latest</option>
+              <option value="gemini-flash-latest">gemini-flash-latest</option>
+              <option value="gemini-flash-lite-latest" selected>gemini-flash-lite-latest</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+              <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+              <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+              <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+            </select>
             <div class="help-text">
-              Enter the Gemini model id. See available models at
+              Select the Gemini model to use. See available models at
               <a
                 href="https://ai.google.dev/gemini-api/docs/models/gemini"
                 target="_blank"
@@ -862,6 +923,24 @@
               Higher values may increase response time
             </div>
           </div>
+
+          <div class="form-group">
+            <label class="form-label" for="maxTurns"
+              >AI Agent Max Turns</label
+            >
+            <input
+              type="number"
+              id="maxTurns"
+              placeholder="Default: 6"
+              min="4"
+              max="12"
+              step="1"
+              value="6"
+            />
+            <div class="help-text">
+              Maximum number of reasoning turns the AI agent can use. Higher values may improve results but increase response time.
+            </div>
+          </div>
         </div>
 
         <div class="button-group">
@@ -880,7 +959,7 @@
         </div>
 
         <a
-          href="https://buymeacoffee.com/itcon"
+          href="https://buymeacoffee.com/eremesng"
           target="_blank"
           class="bmc-button"
         >
@@ -1023,10 +1102,10 @@
     </div>
 
     <footer>
-      From the stables of ITCON . Made with love in Melbourne, AU<br />Submit
+      Made with <span class="heart">❤</span> by EremesNG<br />Submit
       feature requests, issues at
       <a
-        href="https://github.com/itcon-pty-au/stremio-ai-search"
+        href="https://github.com/EremesNG/stremio-ai-picks"
         target="_blank"
         class="github-link"
       >
@@ -1047,9 +1126,9 @@
     </footer>
 
     <script>
-      const addonName = "AI Search";
+      const addonName = "AI Picks";
       const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID"; // This will be replaced with the actual client ID from the server
-      const HOST = "stremio.itcon.au"; // This will be replaced with the actual host from the server
+      const HOST = "github.com/EremesNG/stremio-ai-picks"; // This will be replaced with the actual host from the server
 
       function setLoading(isLoading) {
         const configureBtn = document.getElementById("configureBtn");
@@ -1113,7 +1192,76 @@
       document.addEventListener("DOMContentLoaded", function () {
         // Setup key handling
         setupKeyHandling();
+        parseHomepageQuery('');
       });
+
+      function addCatalogRow(title = '', query = '') {
+        const container = document.getElementById('catalogRowsContainer');
+        const row = document.createElement('div');
+        row.className = 'catalog-row';
+        row.innerHTML = `
+          <input type="text" class="catalog-title" placeholder="Category name" value="${title.replace(/"/g, '&quot;')}">
+          <input type="text" class="catalog-query" placeholder="AI search query" value="${query.replace(/"/g, '&quot;')}">
+          <button type="button" class="catalog-remove" onclick="this.parentElement.remove(); updateHomepageQueryHidden();">&times;</button>
+        `;
+        row.querySelectorAll('input').forEach(input => {
+          input.addEventListener('input', updateHomepageQueryHidden);
+        });
+        container.appendChild(row);
+        updateHomepageQueryHidden();
+      }
+
+      function updateHomepageQueryHidden() {
+        const rows = document.querySelectorAll('.catalog-row');
+        const catalogs = [];
+        rows.forEach(row => {
+          const title = row.querySelector('.catalog-title').value.trim();
+          const query = row.querySelector('.catalog-query').value.trim();
+          if (title && query) {
+            catalogs.push(`${title}:${query}`);
+          }
+        });
+        document.getElementById('homepageQuery').value = catalogs.join('|||');
+      }
+
+      function splitHomepageQueryEntries(queryStr) {
+         if (!queryStr) return [];
+         return queryStr.split('|||').map(q => q.trim()).filter(Boolean);
+       }
+
+      function parseHomepageQuery(queryStr) {
+        const container = document.getElementById('catalogRowsContainer');
+        container.innerHTML = '';
+        if (!queryStr) {
+          addCatalogRow();
+          return;
+        }
+        
+        const catalogs = splitHomepageQueryEntries(queryStr);
+        let added = false;
+        catalogs.forEach(cat => {
+          const parts = cat.split(':');
+          if (parts.length >= 2) {
+            const title = parts[0].trim();
+            const query = parts.slice(1).join(':').trim();
+            if (title && query) {
+              addCatalogRow(title, query);
+              added = true;
+            }
+          }
+        });
+        if (!added) {
+          addCatalogRow();
+        }
+      }
+
+      function toggleTraktDependentFields() {
+        const hasTrakt = !!document.getElementById("traktAccessToken").value || !!document.getElementById("traktUsername").value;
+        const filterWatchedGroup = document.getElementById("filterWatchedGroup");
+        if (filterWatchedGroup) {
+          filterWatchedGroup.style.display = hasTrakt ? "block" : "none";
+        }
+      }
 
       window.getAddonUrl = async function () {
         const geminiKey = document.getElementById("geminiKey").value.trim();
@@ -1144,6 +1292,7 @@
             RpdbApiKey: document.getElementById("rpdbKey").value.trim(),
             FanartApiKey: document.getElementById("fanartKey").value.trim(),
             NumResults: parseInt(document.getElementById("numResults").value.trim()) || 20,
+            MaxTurns: parseInt(document.getElementById("maxTurns").value.trim()) || 6,
             EnableAiCache: document.getElementById("enableAiCache").checked,
             TmdbLanguage: document.getElementById("tmdbLanguage").value,
             GeminiModel: document.getElementById("geminiModel").value,
@@ -1151,6 +1300,7 @@
             EnableHomepage: document.getElementById("enableHomepage").checked,
             IncludeAdult: document.getElementById("includeAdult").checked,
             EnableSimilar: document.getElementById("enableSimilar").checked,
+            FilterWatched: document.getElementById("filterWatched").checked,
           };
 
           // Add conditional properties
@@ -1185,12 +1335,12 @@
             traktAuthData: traktAuthData, // This will be null if no new Trakt login happened
           };
 
-          // 4. Send the new payload to the server
-          const response = await fetch(`/aisearch/encrypt`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
+            // 4. Send the new payload to the server
+            const response = await fetch(`/encrypt`, {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify(payload),
+           });
 
           // --- Main Logic Change Ends Here ---
 
@@ -1198,11 +1348,11 @@
           const data = await response.json();
           if (!data.encryptedConfig) throw new Error("No encrypted configuration received");
 
-          const configId = data.encryptedConfig;
-          return {
-            stremio: `stremio://${window.location.host}/aisearch/${configId}/manifest.json`,
-            https: `https://${window.location.host}/aisearch/${configId}/manifest.json`,
-          };
+            const configId = data.encryptedConfig;
+            return {
+              stremio: `stremio://${window.location.host}/${configId}/manifest.json`,
+              https: `https://${window.location.host}/${configId}/manifest.json`,
+            };
         } catch (error) {
           showError("Error: " + error.message);
           return null;
@@ -1221,20 +1371,20 @@
           .value.trim();
         const fanartKey = document.getElementById("fanartKey").value.trim();
 
-        try {
-          const response = await fetch(`/aisearch/validate`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              GeminiApiKey: geminiKey,
-              TmdbApiKey: tmdbKey,
-              FanartApiKey: fanartKey,
-              TraktAccessToken: traktAccessToken,
-              TraktRefreshToken: traktRefreshToken,
-            }),
-          });
+          try {
+            const response = await fetch(`/validate`, {
+             method: "POST",
+             headers: {
+               "Content-Type": "application/json",
+             },
+             body: JSON.stringify({
+               GeminiApiKey: geminiKey,
+               TmdbApiKey: tmdbKey,
+               FanartApiKey: fanartKey,
+               TraktAccessToken: traktAccessToken,
+               TraktRefreshToken: traktRefreshToken,
+             }),
+           });
 
           const result = await response.json();
 
@@ -1377,39 +1527,36 @@
         toggleHomepageQueryVisibility(); // Set initial state on load
         document.getElementById('enableHomepage').addEventListener('change', toggleHomepageQueryVisibility);
 
-        // Check if we're in edit mode (URL contains a config ID)
-        const path = window.location.pathname;
-        const isDirectAccess =
-          path === "/aisearch/configure" || path === "/configure";
-        const configIdMatch = isDirectAccess
-          ? null
-          : path.match(
-              /\/aisearch\/([^\/]+)\/configure$|\/([^\/]+)\/configure$/
+         // Check if we're in edit mode (URL contains a config ID)
+         const path = window.location.pathname;
+         const isDirectAccess = path === "/configure";
+         const configIdMatch = isDirectAccess
+           ? null
+           : path.match(/\/([^\/]+)\/configure$/);
+
+         if (!isDirectAccess && configIdMatch) {
+           // Get the config ID from the capture group
+           const configId = configIdMatch[1];
+           console.log("Editing existing configuration:", configId);
+
+            // Fix image paths when in edit mode
+            const basePath = "";
+            document.querySelector(".logo").src = `${basePath}/logo.png`;
+            const bmcImg = document.querySelector(".bmc-button img");
+            if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
+
+           // Set the config ID to a hidden field
+           document.getElementById("existingConfigId").value = configId;
+
+            // Load the existing configuration
+            const baseUrl = window.location.origin;
+            const apiPath = "";
+            console.log(
+              "Fetching config from:",
+              `${baseUrl}${apiPath}/api/getConfig/${configId}`
             );
 
-        if (!isDirectAccess && configIdMatch) {
-          // Get the config ID from whichever capture group matched
-          const configId = configIdMatch[1] || configIdMatch[2];
-          console.log("Editing existing configuration:", configId);
-
-          // Fix image paths when in edit mode
-          const basePath = path.startsWith("/aisearch") ? "/aisearch" : "";
-          document.querySelector(".logo").src = `${basePath}/logo.png`;
-          const bmcImg = document.querySelector(".bmc-button img");
-          if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
-
-          // Set the config ID to a hidden field
-          document.getElementById("existingConfigId").value = configId;
-
-          // Load the existing configuration
-          const baseUrl = window.location.origin;
-          const apiPath = path.startsWith("/aisearch") ? "/aisearch" : "";
-          console.log(
-            "Fetching config from:",
-            `${baseUrl}${apiPath}/api/getConfig/${configId}`
-          );
-
-          fetch(`${baseUrl}${apiPath}/api/getConfig/${configId}`)
+            fetch(`${baseUrl}${apiPath}/api/getConfig/${configId}`)
             .then((response) => {
               console.log(
                 "Config fetch response:",
@@ -1472,7 +1619,21 @@
                   config.IncludeAdult;
 
               if (config.HomepageQuery) {
-                  document.getElementById("homepageQuery").value = config.HomepageQuery;
+                  parseHomepageQuery(config.HomepageQuery);
+              } else {
+                  parseHomepageQuery('');
+              }
+
+              if (config.FilterWatched !== undefined) {
+                document.getElementById("filterWatched").checked = config.FilterWatched;
+              } else {
+                document.getElementById("filterWatched").checked = true;
+              }
+
+              if (config.MaxTurns !== undefined) {
+                document.getElementById("maxTurns").value = config.MaxTurns;
+              } else {
+                document.getElementById("maxTurns").value = 6;
               }
 
               // Call toggleRpdbFields *after* setting the checkbox state and API key
@@ -1524,15 +1685,15 @@
               alert(
                 "Failed to load the existing configuration. Please try again or create a new one."
               );
-            });
-        } else {
-          // Direct access to /aisearch/configure
-          // Fix image paths for direct access
-          const basePath = path.startsWith("/aisearch") ? "/aisearch" : "";
-          document.querySelector(".logo").src = `${basePath}/logo.png`;
-          const bmcImg = document.querySelector(".bmc-button img");
-          if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
-        }
+             });
+          } else {
+            // Direct access to /configure
+            // Fix image paths for direct access
+            const basePath = "";
+            document.querySelector(".logo").src = `${basePath}/logo.png`;
+            const bmcImg = document.querySelector(".bmc-button img");
+            if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
+          }
       });
 
 window.addEventListener("message", async function (event) {
@@ -1572,6 +1733,7 @@ window.addEventListener("message", async function (event) {
               "#2a5a2a", // Green color for success
               `Successfully connected as <strong>${username}</strong>! Click 'Configure Addon' below to save.`
             );
+            toggleTraktDependentFields();
           } catch (error) {
             console.error("Trakt user fetch error:", error);
             updateTraktStatus(
@@ -1593,6 +1755,7 @@ window.addEventListener("message", async function (event) {
                 "#2a5a2a", // Green color
                 `Your addon is connected to Trakt.tv as <strong>${existingUsername}</strong>. To change accounts, use the login button again.`
             );
+            toggleTraktDependentFields();
             return;
         }
 
@@ -1603,6 +1766,9 @@ window.addEventListener("message", async function (event) {
             "#2a2a2a",
             "Connect your Trakt.tv account to get personalized movie recommendations based on your watch history and ratings."
           );
+          toggleTraktDependentFields();
+        } else {
+          toggleTraktDependentFields();
         }
       }
 
@@ -1630,6 +1796,7 @@ window.addEventListener("message", async function (event) {
           rpdbPosterType: document.getElementById("rpdbPosterType").value,
           tmdbLanguage: document.getElementById("tmdbLanguage").value,
           numResults: document.getElementById("numResults").value,
+          maxTurns: document.getElementById("maxTurns").value,
           enableAiCache: document.getElementById("enableAiCache").checked,
           showAdvancedOptions: document.getElementById("showAdvancedOptions")
             .checked,
@@ -1641,11 +1808,12 @@ window.addEventListener("message", async function (event) {
           enableHomepage: document.getElementById("enableHomepage").checked,
           homepageQuery: document.getElementById("homepageQuery").value,
           includeAdult: document.getElementById("includeAdult").checked,
+          filterWatched: document.getElementById("filterWatched").checked,
         };
-        sessionStorage.setItem("formData", JSON.stringify(formData));
+         sessionStorage.setItem("formData", JSON.stringify(formData));
 
-        const redirectUri = `${window.location.origin}/aisearch/oauth/callback`;
-        const state = Math.random().toString(36).substring(7);
+          const redirectUri = `${window.location.origin}/oauth/callback`;
+         const state = Math.random().toString(36).substring(7);
         sessionStorage.setItem("traktOAuthState", state);
 
         const width = Math.min(600, window.screen.width * 0.9);
@@ -1681,6 +1849,8 @@ window.addEventListener("message", async function (event) {
             formData.tmdbLanguage || "en-US";
           document.getElementById("numResults").value =
             formData.numResults || "20";
+          document.getElementById("maxTurns").value =
+            formData.maxTurns || "6";
           document.getElementById("enableAiCache").checked =
             formData.enableAiCache !== false;
           if (formData.geminiModel)
@@ -1695,9 +1865,12 @@ window.addEventListener("message", async function (event) {
           document.getElementById("enableHomepage").checked =
             formData.enableHomepage !== false;
           if (formData.homepageQuery) {
-              document.getElementById("homepageQuery").value = formData.homepageQuery;
+              parseHomepageQuery(formData.homepageQuery);
+          } else {
+              parseHomepageQuery('');
           }
           document.getElementById("includeAdult").checked = !!formData.includeAdult;
+          document.getElementById("filterWatched").checked = formData.filterWatched !== false;
           // Call toggleHomepageQueryVisibility *after* restoring state
           toggleHomepageQueryVisibility();
           // Restore Trakt token if it exists
@@ -1851,15 +2024,15 @@ window.addEventListener("message", async function (event) {
             recaptchaToken: recaptchaToken,
           };
 
-          console.log("Submitting form data:", formData);
+           console.log("Submitting form data:", formData);
 
-          const response = await fetch(`/aisearch/submit-issue`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(formData),
-          });
+            const response = await fetch(`/submit-issue`, {
+             method: "POST",
+             headers: {
+               "Content-Type": "application/json",
+             },
+             body: JSON.stringify(formData),
+           });
 
           const responseData = await response.json();
           console.log("Server response:", responseData);
@@ -1876,7 +2049,7 @@ window.addEventListener("message", async function (event) {
             `<p style="margin-bottom: 15px;">Thank you for your ${feedbackType}. Your feedback has been successfully submitted.</p>${
               responseData.issueUrl
                 ? `<p style="margin-bottom: 10px;">You can track the status of your ${feedbackType} at: <a href="${responseData.issueUrl}" target="_blank">${responseData.issueUrl}</a></p>`
-                : `<p style="margin-bottom: 0;">You can track all issues and ideas at <a href="https://github.com/itcon-pty-au/stremio-ai-search/issues" target="_blank">GitHub Issues</a></p>`
+                : `<p style="margin-bottom: 0;">You can track all issues and ideas at <a href="https://github.com/your-org/stremio-ai-search/issues" target="_blank">GitHub Issues</a></p>`
             }`,
             true
           );

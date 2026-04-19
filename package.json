@@ -1,28 +1,34 @@
 {
-  "name": "stremio-ai-addon",
-  "version": "1.0.0",
+  "name": "stremio-ai-picks",
+  "version": "2.0.0",
   "description": "AI-powered movie and series recommendations for Stremio",
   "main": "server.js",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "start": "node server.js",
-    "start:dev": "ENABLE_LOGGING=true node server.js"
+    "start": "vercel dev"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "compression": "^1.7.4",
+    "@google/genai": "^1.50.1",
+    "@libsql/client": "^0.17.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.x",
     "express-rate-limit": "^7.1.5",
     "lru-cache": "^10.0.1",
     "node-fetch": "^2.7.x",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
     "stremio-addon-sdk": "^1.6.10"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   },
   "engines": {
     "node": ">=16.0.0"
   },
-  "author": "ITCON",
+  "author": "EremesNG",
   "license": "MIT",
   "private": true
 }
