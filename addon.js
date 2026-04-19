@@ -3648,7 +3648,7 @@ const catalogHandler = async function (args, req) {
       logger.info("Recommendation processing complete", {
         validRecommendations,
         invalidLines,
-        totalProcessed: lines.length,
+        totalProcessed: recommendationsList.length,
       });
 
       const finalResult = {
