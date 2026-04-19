@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Node.js/CommonJS, Express, stremio-addon-sdk, @google/generative-ai, TMDB, Trakt.tv, sqlite/sqlite3, pnpm.
+  Architecture: server.js is the HTTP entry point; addon.js handles catalog/meta/stream logic; database.js stores Trakt tokens in SQLite; config is AES-256-CBC encrypted in the manifest URL.
+  Testing: no test suite, linter, or formatter detected.
+  Style: CommonJS modules, shared logger in utils/logger.js, retry helper in utils/apiRetry.js, dotenv-backed env loading.
+  CI: no CI workflows detected.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+  specs:
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Use Given/When/Then format for scenarios
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions
+    tdd: false
+    test_command: ''
+  verify:
+    test_command: ''
+    build_command: ''
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
