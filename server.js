@@ -302,7 +302,9 @@ if (ENABLE_LOGGING) {
 
 const PORT = 7000;
 const HOST = process.env.HOST
-  ? `https://${process.env.HOST}`
+  ? (process.env.HOST.startsWith("http://") || process.env.HOST.startsWith("https://")
+      ? process.env.HOST
+      : `https://${process.env.HOST}`)
   : "https://stremio.itcon.au";
 const BASE_PATH = "/aisearch";
 
