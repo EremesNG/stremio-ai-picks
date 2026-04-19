@@ -108,7 +108,7 @@ const TRAKT_API_BASE = "https://api.trakt.tv";
 
 const setupManifest = {
   id: "eremesng.aipicks",
-  version: "1.0.65",
+  version: "2.0.0",
   name: "AI Picks",
   description: "AI-powered movie and series recommendations",
   logo: `${HOST}${BASE_PATH}/logo.png`,
