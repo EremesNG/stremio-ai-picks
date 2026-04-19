@@ -259,7 +259,12 @@ async function refreshTraktToken(username, refreshToken) {
   try {
     const response = await fetch("https://api.trakt.tv/oauth/token", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "stremio-ai-search",
+        "trakt-api-version": "2",
+        "trakt-api-key": TRAKT_CLIENT_ID,
+      },
       body: JSON.stringify({
         refresh_token: refreshToken,
         client_id: process.env.TRAKT_CLIENT_ID,
@@ -300,6 +305,15 @@ const HOST = process.env.HOST
   ? `https://${process.env.HOST}`
   : "https://stremio.itcon.au";
 const BASE_PATH = "/aisearch";
+
+function getRequestOrigin(req) {
+  const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0].trim();
+  const forwardedHost = req.get("x-forwarded-host")?.split(",")[0].trim();
+  const protocol = forwardedProto || req.protocol;
+  const host = forwardedHost || req.get("host");
+
+  return `${protocol}://${host}`;
+}
 
 const DEFAULT_RPDB_KEY = process.env.RPDB_API_KEY;
 const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID;
@@ -830,25 +844,36 @@ async function startServer() {
           }
 
           // Exchange the code for an access token
-          const tokenResponse = await fetch(
-            "https://api.trakt.tv/oauth/token",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                code,
-                client_id: TRAKT_CLIENT_ID,
-                client_secret: TRAKT_CLIENT_SECRET,
-                redirect_uri: `${HOST}/aisearch/oauth/callback`,
-                grant_type: "authorization_code",
-              }),
-            }
-          );
+           const tokenResponse = await fetch(
+             "https://api.trakt.tv/oauth/token",
+             {
+               method: "POST",
+               headers: {
+                 "Content-Type": "application/json",
+                 "User-Agent": "stremio-ai-search",
+                 "trakt-api-version": "2",
+                 "trakt-api-key": TRAKT_CLIENT_ID,
+               },
+               // Match the browser-originated redirect URI exactly, including when behind proxies.
+               // The callback is mounted under /aisearch, so use the active request base path here.
+               body: JSON.stringify({
+                 code,
+                 client_id: TRAKT_CLIENT_ID,
+                 client_secret: TRAKT_CLIENT_SECRET,
+                 redirect_uri: `${getRequestOrigin(req)}${req.baseUrl || ""}${req.route?.path || "/oauth/callback"}`,
+                 grant_type: "authorization_code",
+               }),
+             }
+           );
 
           if (!tokenResponse.ok) {
-            throw new Error("Failed to exchange code for token");
+            const errorBody = await tokenResponse.text();
+            logger.error("Trakt token exchange failed", {
+              status: tokenResponse.status,
+              body: errorBody,
+              redirect_uri: `${getRequestOrigin(req)}${req.baseUrl || ""}${req.route?.path || "/oauth/callback"}`,
+            });
+            throw new Error(`Failed to exchange code for token: ${tokenResponse.status}`);
           }
 
           const tokenData = await tokenResponse.json();
@@ -866,7 +891,7 @@ async function startServer() {
                       access_token: "${tokenData.access_token}",
                       refresh_token: "${tokenData.refresh_token}",
                       expires_in: ${tokenData.expires_in}
-                    }, "${HOST}");
+                    }, "${getRequestOrigin(req)}");
                     window.close();
                   }
                 </script>
@@ -1337,28 +1362,31 @@ async function startServer() {
         `);
       });
 
-      // Update Trakt.tv token refresh endpoint to use pre-configured credentials
-      addonRouter.post("/oauth/refresh", async (req, res) => {
-        try {
-          const { refresh_token } = req.body;
+       // Update Trakt.tv token refresh endpoint to use pre-configured credentials
+       addonRouter.post("/oauth/refresh", async (req, res) => {
+         try {
+           const { refresh_token } = req.body;
 
-          if (!refresh_token) {
-            return res.status(400).json({ error: "Missing refresh token" });
-          }
+           if (!refresh_token) {
+             return res.status(400).json({ error: "Missing refresh token" });
+           }
 
-          const response = await fetch("https://api.trakt.tv/oauth/token", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              refresh_token,
-              client_id: TRAKT_CLIENT_ID,
-              client_secret: TRAKT_CLIENT_SECRET,
-              redirect_uri: `${HOST}/aisearch/oauth/callback`,
-              grant_type: "refresh_token",
-            }),
-          });
+           const response = await fetch("https://api.trakt.tv/oauth/token", {
+             method: "POST",
+             headers: {
+               "Content-Type": "application/json",
+               "User-Agent": "stremio-ai-search",
+               "trakt-api-version": "2",
+               "trakt-api-key": TRAKT_CLIENT_ID,
+             },
+             body: JSON.stringify({
+               refresh_token,
+               client_id: TRAKT_CLIENT_ID,
+               client_secret: TRAKT_CLIENT_SECRET,
+               redirect_uri: `${HOST}/aisearch/oauth/callback`,
+               grant_type: "refresh_token",
+             }),
+           });
 
           if (!response.ok) {
             throw new Error("Failed to refresh token");
