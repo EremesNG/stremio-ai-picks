@@ -1529,7 +1529,7 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
       errors: {},
     };
     
-    const modelToUse = GeminiModel || "gemini-2.5-flash-lite";
+    const modelToUse = GeminiModel || "gemini-flash-lite-latest";
 
     if (ENABLE_LOGGING) {
       logger.debug("Validation request received", {
@@ -1634,14 +1634,15 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
     if (tokenToCheck) {
       validations.push((async () => {
         try {
-          const traktResponse = await fetch(`${TRAKT_API_BASE}/users/me`, {
-            headers: {
-              "Content-Type": "application/json",
-              "trakt-api-version": "2",
-              "trakt-api-key": TRAKT_CLIENT_ID,
-              Authorization: `Bearer ${tokenToCheck}`,
-            },
-          });
+           const traktResponse = await fetch(`${TRAKT_API_BASE}/users/me`, {
+             headers: {
+               "Content-Type": "application/json",
+               "User-Agent": "stremio-ai-search",
+               "trakt-api-version": "2",
+               "trakt-api-key": TRAKT_CLIENT_ID,
+               Authorization: `Bearer ${tokenToCheck}`,
+             },
+           });
           if (!traktResponse.ok) {
             validationResults.trakt = false;
             validationResults.errors.trakt = "Trakt.tv connection is invalid. Please re-login.";

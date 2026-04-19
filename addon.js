@@ -5,6 +5,10 @@ const logger = require("./utils/logger");
 const path = require("path");
 const { decryptConfig } = require("./utils/crypto");
 const { withRetry } = require("./utils/apiRetry");
+const { runAgentLoop } = require("./utils/agent");
+const { toolDeclarations, executeTools: executeAgentTools } = require("./utils/agent-tools");
+const { fetchTraktFavorites, normalizeMediaKey } = require("./utils/trakt");
+const { buildLinearPrompt } = require("./utils/prompts");
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
 const TMDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB
 const TMDB_DISCOVER_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB discover (was 12 hours)
@@ -18,6 +22,10 @@ const TRAKT_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const TRAKT_RAW_DATA_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DEFAULT_TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID;
 const MAX_AI_RECOMMENDATIONS = 30;
+const MAX_DO_NOT_RECOMMEND_ITEMS = 200;
+const TRAKT_PAGINATION_LIMIT = 1000;
+const TRAKT_PAGINATION_MAX_PAGES = 20;
+const TRAKT_PAGINATION_CONCURRENCY = 4;
 
 // Stats counter for tracking total queries
 let queryCounter = 0;
@@ -240,7 +248,7 @@ setInterval(() => {
   });
 }, 60 * 60 * 1000);
 
-const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-lite";
+const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 
 // Add separate caches for raw and processed Trakt data
 const traktRawDataCache = new SimpleLRUCache({
@@ -558,6 +566,139 @@ function createErrorMeta(title, message) {
   };
 }
 
+async function makeApiCall(url, headers) {
+  return await withRetry(
+    async () => {
+      const response = await fetch(url, { headers });
+
+      logger.agent('TRAKT_HTTP_CALL', {
+        url: url
+          .replace(/access_token=[^&]+/, 'access_token=REDACTED')
+          .replace(/api_key=[^&]+/, 'api_key=REDACTED'),
+        status: response.status,
+        ok: response.ok,
+      });
+
+      if (response.status === 401) {
+        logger.warn(
+          "Trakt access token is expired. Personalized recommendations will be unavailable until the user updates their configuration."
+        );
+      }
+
+      return response;
+    },
+    {
+      maxRetries: 3,
+      baseDelay: 1000,
+      shouldRetry: (error) => !error.status || (error.status !== 401 && error.status !== 403),
+      operationName: "Trakt API call",
+    }
+  );
+}
+
+function getTraktPageCount(response) {
+  const pageCountHeader = response?.headers?.get("X-Pagination-Page-Count");
+  const pageCount = Number.parseInt(pageCountHeader, 10);
+  return Number.isFinite(pageCount) && pageCount > 0 ? pageCount : 1;
+}
+
+async function fetchTraktPage(endpoint, headers) {
+  const response = await makeApiCall(endpoint, headers);
+  const data = await response.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+async function fetchTraktPaginatedCollection(endpoint, headers, operationLabel) {
+  const firstPageUrl = new URL(endpoint);
+  firstPageUrl.searchParams.set("page", "1");
+  firstPageUrl.searchParams.set("limit", String(TRAKT_PAGINATION_LIMIT));
+
+  const firstResponse = await makeApiCall(firstPageUrl.toString(), headers);
+  logger.agent('TRAKT_API_RESPONSE', {
+    url: firstPageUrl.toString().replace(/access_token=[^&]+/, 'access_token=REDACTED'),
+    status: firstResponse.status,
+    statusText: firstResponse.statusText,
+    pageCount: firstResponse.headers.get('X-Pagination-Page-Count'),
+    itemCount: firstResponse.headers.get('X-Pagination-Item-Count'),
+    ok: firstResponse.ok,
+  });
+
+  if (!firstResponse.ok) {
+    const errorBody = await firstResponse.text().catch(() => 'unable to read body');
+    logger.agent('TRAKT_API_ERROR', {
+      url: firstPageUrl.toString().replace(/access_token=[^&]+/, 'access_token=REDACTED'),
+      status: firstResponse.status,
+      body: errorBody,
+      label: operationLabel,
+    });
+    throw new Error(`Trakt API error: ${firstResponse.status} ${firstResponse.statusText}`);
+  }
+
+  const firstPage = await firstResponse.json().catch(() => []);
+  logger.agent('TRAKT_FIRST_PAGE', {
+    isArray: Array.isArray(firstPage),
+    itemCount: Array.isArray(firstPage) ? firstPage.length : 0,
+    type: typeof firstPage,
+    sample: Array.isArray(firstPage) ? (firstPage[0] ? Object.keys(firstPage[0]) : []) : Object.keys(firstPage || {}),
+    label: operationLabel,
+  });
+  const totalPages = getTraktPageCount(firstResponse);
+  const pageCount = Math.min(totalPages, TRAKT_PAGINATION_MAX_PAGES);
+
+  if (totalPages > TRAKT_PAGINATION_MAX_PAGES) {
+    logger.warn("Trakt pagination cap reached", {
+      operation: operationLabel,
+      endpoint,
+      pageCount: totalPages,
+      cappedAt: TRAKT_PAGINATION_MAX_PAGES,
+    });
+  }
+
+  if (pageCount <= 1) {
+    return Array.isArray(firstPage) ? firstPage : [];
+  }
+
+  const pages = [];
+  for (let page = 2; page <= pageCount; page += 1) {
+    pages.push(page);
+  }
+
+  const additionalPages = [];
+  for (let index = 0; index < pages.length; index += TRAKT_PAGINATION_CONCURRENCY) {
+    const batch = pages.slice(index, index + TRAKT_PAGINATION_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (page) => {
+        const pageUrl = new URL(endpoint);
+        pageUrl.searchParams.set("page", String(page));
+        pageUrl.searchParams.set("limit", String(TRAKT_PAGINATION_LIMIT));
+
+        const pageResponse = await makeApiCall(pageUrl.toString(), headers);
+        if (!pageResponse.ok) {
+          const errorBody = await pageResponse.text().catch(() => 'unable to read body');
+          logger.agent('TRAKT_API_ERROR', {
+            url: pageUrl.toString().replace(/access_token=[^&]+/, 'access_token=REDACTED'),
+            status: pageResponse.status,
+            body: errorBody,
+            label: operationLabel,
+            page,
+          });
+          return [];
+        }
+
+        const pageData = await pageResponse.json().catch(() => []);
+        return Array.isArray(pageData) ? pageData : [];
+      })
+    );
+
+    additionalPages.push(...batchResults);
+  }
+
+  return [
+    ...(Array.isArray(firstPage) ? firstPage : []),
+    ...additionalPages.flat(),
+  ];
+}
+
 // Function to fetch incremental Trakt data
 async function fetchTraktIncrementalData(
   clientId,
@@ -569,13 +710,14 @@ async function fetchTraktIncrementalData(
   const startDate = new Date(lastUpdate).toISOString().split(".")[0] + "Z";
 
   const endpoints = [
-    `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full&start_at=${startDate}&page=1&limit=100`,
-    `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full&start_at=${startDate}&page=1&limit=100`,
-    `${TRAKT_API_BASE}/users/me/history/${type}?extended=full&start_at=${startDate}&page=1&limit=100`,
+    `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full&start_at=${startDate}`,
+    `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full&start_at=${startDate}`,
+    `${TRAKT_API_BASE}/users/me/history/${type}?extended=full&start_at=${startDate}`,
   ];
 
   const headers = {
     "Content-Type": "application/json",
+    "User-Agent": "stremio-ai-search",
     "trakt-api-version": "2",
     "trakt-api-key": clientId,
     Authorization: `Bearer ${accessToken}`,
@@ -584,8 +726,7 @@ async function fetchTraktIncrementalData(
   // Fetch all data in parallel
   const responses = await Promise.all(
     endpoints.map((endpoint) =>
-      makeApiCall(endpoint, headers)
-        .then((res) => res.json())
+      fetchTraktPaginatedCollection(endpoint, headers, "Trakt incremental fetch")
         .catch((err) => {
           logger.error("Trakt API Error:", { endpoint, error: err.message });
           return [];
@@ -607,6 +748,8 @@ async function fetchTraktWatchedAndRated(
   type = "movies",
   config = null
 ) {
+  logger.agent('TRAKT_FETCH_START', { mediaType: type, hasClientId: !!clientId, hasAccessToken: !!accessToken });
+
   logger.info("fetchTraktWatchedAndRated called", {
     hasClientId: !!clientId,
     clientIdLength: clientId?.length,
@@ -616,6 +759,7 @@ async function fetchTraktWatchedAndRated(
   });
 
   if (!clientId || !accessToken) {
+    logger.agent('TRAKT_FETCH_FAILED', { reason: 'missing_credentials', error: 'clientId or accessToken is missing' });
     logger.error("Missing Trakt credentials", {
       hasClientId: !!clientId,
       hasAccessToken: !!accessToken,
@@ -623,34 +767,13 @@ async function fetchTraktWatchedAndRated(
     return null;
   }
 
-  const makeApiCall = async (url, headers) => {
-    return await withRetry(
-      async () => {
-        const response = await fetch(url, { headers });
-        
-        if (response.status === 401) {
-          logger.warn(
-            "Trakt access token is expired. Personalized recommendations will be unavailable until the user updates their configuration."
-          );
-        }
-        
-        return response;
-      },
-      {
-        maxRetries: 3,
-        baseDelay: 1000,
-        shouldRetry: (error) => !error.status || (error.status !== 401 && error.status !== 403),
-        operationName: "Trakt API call"
-      }
-    );
-  };
-
   const rawCacheKey = `trakt_raw_${accessToken}_${type}`;
   const processedCacheKey = `trakt_${accessToken}_${type}`;
 
   // Check if we have processed data in cache
   if (traktCache.has(processedCacheKey)) {
     const cached = traktCache.get(processedCacheKey);
+    logger.agent('TRAKT_CACHE_HIT', { cacheKey: processedCacheKey, watchedCount: cached?.data?.watched?.length, ratedCount: cached?.data?.rated?.length });
     logger.info("Trakt processed cache hit", {
       cacheKey: processedCacheKey,
       type,
@@ -728,13 +851,14 @@ async function fetchTraktWatchedAndRated(
       const fetchStart = Date.now();
       // Use the original fetch logic for a full refresh but without limits
       const endpoints = [
-        `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full&page=1&limit=100`,
-        `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full&page=1&limit=100`,
-        `${TRAKT_API_BASE}/users/me/history/${type}?extended=full&page=1&limit=100`,
+        `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full`,
+        `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full`,
+        `${TRAKT_API_BASE}/users/me/history/${type}?extended=full`,
       ];
 
       const headers = {
         "Content-Type": "application/json",
+        "User-Agent": "stremio-ai-search",
         "trakt-api-version": "2",
         "trakt-api-key": clientId,
         Authorization: `Bearer ${accessToken}`,
@@ -742,8 +866,7 @@ async function fetchTraktWatchedAndRated(
 
       const responses = await Promise.all(
         endpoints.map((endpoint) =>
-          makeApiCall(endpoint, headers)
-            .then((res) => res.json())
+          fetchTraktPaginatedCollection(endpoint, headers, "Trakt full refresh")
             .catch((err) => {
               logger.error("Trakt API Error:", {
                 endpoint,
@@ -778,6 +901,7 @@ async function fetchTraktWatchedAndRated(
         historyCount: rawData.history.length,
       });
     } catch (error) {
+      logger.agent('TRAKT_FETCH_FAILED', { reason: 'api_error_during_full_refresh', error: error?.message });
       logger.error("Trakt API Error:", {
         error: error.message,
         stack: error.stack,
@@ -1902,14 +2026,32 @@ async function toStremioMeta(
   const userTier = usingUserKey ? getRpdbTierFromApiKey(userRpdbKey) : -1;
   const isTier0User = (usingUserKey && userTier === 0) || usingDefaultKey;
 
-const tmdbData = await searchTMDB(
-    item.name,
-    type,
-    item.year,
-    tmdbKey,
-    language,
-    includeAdult
-  );
+  const normalizedTmdbId = Number.parseInt(item.tmdb_id, 10);
+  let tmdbData = null;
+
+  if (Number.isFinite(normalizedTmdbId)) {
+    tmdbData = await getTmdbDetailsByTmdbId(
+      normalizedTmdbId,
+      type,
+      tmdbKey,
+      language
+    );
+  }
+
+  if (!tmdbData) {
+    tmdbData = await searchTMDB(
+      item.name,
+      type,
+      item.year,
+      tmdbKey,
+      language,
+      includeAdult
+    );
+  }
+
+  if (tmdbData && item.imdb_id && !tmdbData.imdb_id) {
+    tmdbData.imdb_id = item.imdb_id;
+  }
 
   if (!tmdbData || !tmdbData.imdb_id) {
     return null;
@@ -2070,6 +2212,69 @@ async function getTmdbDetailsByImdbId(imdbId, type, tmdbKey, language = "en-US")
     return null;
   } catch (error) {
     logger.error("Error fetching TMDB details by IMDB ID", { imdbId, error: error.message });
+    return null;
+  }
+}
+
+async function getTmdbDetailsByTmdbId(tmdbId, type, tmdbKey, language = "en-US") {
+  const cacheKey = `details_tmdb_${tmdbId}_${type}_${language}`;
+  if (tmdbDetailsCache.has(cacheKey)) {
+    return tmdbDetailsCache.get(cacheKey).data;
+  }
+
+  try {
+    const searchType = type === "movie" ? "movie" : "tv";
+    const detailsUrl = `${TMDB_API_BASE}/${searchType}/${tmdbId}?api_key=${tmdbKey}&append_to_response=external_ids&language=${language}`;
+
+    const detailsData = await withRetry(
+      async () => {
+        const response = await fetch(detailsUrl);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const error = new Error(
+            `TMDB details API error: ${response.status} ${
+              errorData?.status_message || ""
+            }`
+          );
+          error.status = response.status;
+          throw error;
+        }
+        return response.json();
+      },
+      {
+        maxRetries: 3,
+        initialDelay: 1000,
+        maxDelay: 8000,
+        operationName: "TMDB details API call by TMDB ID",
+      }
+    );
+
+    const normalizedDetails = {
+      poster: detailsData.poster_path
+        ? `https://image.tmdb.org/t/p/w500${detailsData.poster_path}`
+        : null,
+      backdrop: detailsData.backdrop_path
+        ? `https://image.tmdb.org/t/p/original${detailsData.backdrop_path}`
+        : null,
+      tmdbRating: detailsData.vote_average,
+      genres: Array.isArray(detailsData.genres)
+        ? detailsData.genres.map((genre) => genre.id).filter(Boolean)
+        : [],
+      overview: detailsData.overview || "",
+      tmdb_id: detailsData.id,
+      title: detailsData.title || detailsData.name,
+      release_date: detailsData.release_date || detailsData.first_air_date,
+      imdb_id: detailsData.imdb_id || detailsData.external_ids?.imdb_id || null,
+    };
+
+    tmdbDetailsCache.set(cacheKey, { timestamp: Date.now(), data: normalizedDetails });
+    return normalizedDetails;
+  } catch (error) {
+    logger.error("Error fetching TMDB details by TMDB ID", {
+      tmdbId,
+      type,
+      error: error.message,
+    });
     return null;
   }
 }
@@ -2454,6 +2659,7 @@ function deserializeAllCaches(data) {
  */
 async function discoverTypeAndGenres(query, geminiKey, geminiModel) {
   const ai = new GoogleGenAI({ apiKey: geminiKey });
+  let classifyTokenUsage = null;
 
   const promptText = `
 Analyze this recommendation query: "${query}"
@@ -2474,6 +2680,12 @@ Where:
 
 Do not include any explanatory text before or after your response. Return only JSON.
 `;
+
+  logger.agent("CLASSIFY_PROMPT", {
+    query,
+    model: geminiModel,
+    promptText,
+  });
 
   try {
     logger.info("Making genre discovery API call", {
@@ -2504,8 +2716,8 @@ Do not include any explanatory text before or after your response. Return only J
             },
           };
 
-          if (/2\.5|[3-9]\./i.test(geminiModel)) {
-            config.thinkingConfig = { thinkingBudget: 256 };
+           if (/2\.5|[3-9]\./i.test(geminiModel) && !/-lite/i.test(geminiModel)) {
+             config.thinkingConfig = { thinkingBudget: 256 };
           }
 
           const aiResult = await ai.models.generateContent({
@@ -2514,6 +2726,10 @@ Do not include any explanatory text before or after your response. Return only J
             contents: promptText,
           });
           const responseText = aiResult.text.trim();
+          classifyTokenUsage =
+            aiResult.usageMetadata || {
+              promptTokenCount: aiResult.promptFeedback?.tokenCount ?? null,
+            };
 
           // Log successful response with more details
           logger.info("Genre discovery API response", {
@@ -2527,6 +2743,15 @@ Do not include any explanatory text before or after your response. Return only J
           return aiResult.text;
         } catch (error) {
           // Enhance error with status for retry logic
+          logger.agent("CLASSIFY_ERROR", {
+            query,
+            model: geminiModel,
+            error: {
+              message: error.message,
+              status: error.httpStatus || 500,
+              stack: error.stack,
+            },
+          });
           logger.error("Genre discovery API call failed", {
             error: error.message,
             status: error.httpStatus || 500,
@@ -2559,8 +2784,22 @@ Do not include any explanatory text before or after your response. Return only J
             .filter((g) => g.length > 0 && g.toLowerCase() !== "ambiguous")
         : [];
 
+      const normalizedGenres =
+        genres.length === 1 && genres[0].toLowerCase() === "all" ? [] : genres;
+
+      logger.agent("CLASSIFY_RESPONSE", {
+        query,
+        model: geminiModel,
+        responseText: rawText,
+        classification: {
+          type,
+          genres: normalizedGenres,
+        },
+        tokenUsage: classifyTokenUsage,
+      });
+
       // If the only genre is "all", clear the genres array to use all genres
-      if (genres.length === 1 && genres[0].toLowerCase() === "all") {
+      if (normalizedGenres.length === 0 && genres.length === 1) {
         logger.info(
           "'All' genres specified, will use all genres for recommendations",
           {
@@ -2576,15 +2815,23 @@ Do not include any explanatory text before or after your response. Return only J
 
       logger.info("Successfully parsed genre discovery response", {
         type: type,
-        genresCount: genres.length,
-        genres: genres,
+        genresCount: normalizedGenres.length,
+        genres: normalizedGenres,
       });
 
       return {
         type: type,
-        genres: genres,
+        genres: normalizedGenres,
       };
     } catch (error) {
+      logger.agent("CLASSIFY_ERROR", {
+        query,
+        model: geminiModel,
+        error: {
+          message: error.message,
+          stack: error.stack,
+        },
+      });
       logger.error("Failed to parse genre discovery response", {
         error: error.message,
         fullResponse: rawText,
@@ -2688,6 +2935,172 @@ function getRpdbTierFromApiKey(apiKey) {
     });
     return -1;
   }
+}
+
+function buildMediaIdentityKeys(item) {
+  const normalized = normalizeMediaKey(item);
+  const keys = [];
+
+  if (normalized.type && normalized.tmdb_id != null) {
+    keys.push(`tmdb:${normalized.type}:${normalized.tmdb_id}`);
+  }
+
+  if (normalized.imdb_id) {
+    keys.push(`imdb:${normalized.imdb_id}`);
+  }
+
+  if (normalized.title) {
+    keys.push(
+      `title:${normalized.type || ""}:${normalized.title.trim().toLowerCase()}:${normalized.year ?? ""}`
+    );
+  }
+
+  return keys;
+}
+
+function addMediaIdentityKeys(targetSet, item) {
+  if (!(targetSet instanceof Set)) {
+    return;
+  }
+
+  buildMediaIdentityKeys(item).forEach((key) => targetSet.add(key));
+}
+
+function buildMediaIdentitySet(items = []) {
+  const identitySet = new Set();
+  (Array.isArray(items) ? items : []).forEach((item) => addMediaIdentityKeys(identitySet, item));
+  return identitySet;
+}
+
+function getTraktItemTimestamp(item, fallbackIndex = 0) {
+  const candidates = [
+    item?.listed_at,
+    item?.rated_at,
+    item?.watched_at,
+    item?.last_watched_at,
+    item?.updated_at,
+    item?.collected_at,
+  ];
+
+  for (const value of candidates) {
+    if (!value) {
+      continue;
+    }
+
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+
+  return Number.MAX_SAFE_INTEGER - fallbackIndex;
+}
+
+function buildDoNotRecommendList(watchedItems = [], ratedItems = []) {
+  const combined = [];
+  let order = 0;
+
+  (Array.isArray(watchedItems) ? watchedItems : []).forEach((item, index) => {
+    combined.push({ item, index, order: order += 1 });
+  });
+
+  (Array.isArray(ratedItems) ? ratedItems : []).forEach((item, index) => {
+    combined.push({ item, index, order: order += 1 });
+  });
+
+  combined.sort((left, right) => {
+    const leftTs = getTraktItemTimestamp(left.item, left.index);
+    const rightTs = getTraktItemTimestamp(right.item, right.index);
+
+    if (leftTs !== rightTs) {
+      return rightTs - leftTs;
+    }
+
+    return left.order - right.order;
+  });
+
+  const deduped = new Map();
+
+  combined.forEach(({ item }) => {
+    const normalized = normalizeMediaKey(item);
+    if (!normalized.type && normalized.tmdb_id == null && !normalized.imdb_id && !normalized.title) {
+      return;
+    }
+
+    const key = buildMediaIdentityKeys(normalized)[0] || [
+      normalized.type || "",
+      normalized.tmdb_id ?? "",
+      normalized.imdb_id || "",
+      normalized.title || "",
+      normalized.year ?? "",
+    ].join("|");
+
+    if (!deduped.has(key)) {
+      deduped.set(key, normalized);
+    }
+  });
+
+  const withTmdb = [];
+  const withoutTmdb = [];
+
+  for (const normalized of deduped.values()) {
+    if (normalized.tmdb_id != null) {
+      withTmdb.push(normalized);
+    } else {
+      withoutTmdb.push(normalized);
+    }
+  }
+
+  return [...withTmdb, ...withoutTmdb].slice(0, MAX_DO_NOT_RECOMMEND_ITEMS);
+}
+
+function createFilterCandidates({ traktWatchedIdSet, traktRatedIdSet }) {
+  const seenTmdb = new Set();
+
+  const hasMatch = (candidate) => {
+    const normalized = normalizeMediaKey(candidate);
+    const keys = buildMediaIdentityKeys(normalized);
+
+    return keys.some((key) => traktWatchedIdSet.has(key) || traktRatedIdSet.has(key));
+  };
+
+  return function filterCandidates(rawItems = []) {
+    const unwatched = [];
+    const droppedWatched = [];
+    const droppedNoId = [];
+    const droppedDuplicates = [];
+
+    (Array.isArray(rawItems) ? rawItems : []).forEach((item) => {
+      const normalized = normalizeMediaKey(item);
+
+      if (!normalized.tmdb_id) {
+        droppedNoId.push(item);
+        return;
+      }
+
+      const tmdbKey = `tmdb:${normalized.type || ""}:${normalized.tmdb_id}`;
+      if (seenTmdb.has(tmdbKey)) {
+        droppedDuplicates.push(item);
+        return;
+      }
+
+      if (hasMatch(normalized)) {
+        droppedWatched.push(item);
+        seenTmdb.add(tmdbKey);
+        return;
+      }
+
+      unwatched.push(item);
+      seenTmdb.add(tmdbKey);
+    });
+
+    return {
+      unwatched,
+      droppedWatched,
+      droppedNoId,
+      droppedDuplicates,
+    };
+  };
 }
 
 const catalogHandler = async function (args, req) {
@@ -2796,6 +3209,9 @@ const catalogHandler = async function (args, req) {
 
     const geminiModel = configData.GeminiModel || DEFAULT_GEMINI_MODEL;
     const language = configData.TmdbLanguage || "en-US";
+    const traktUsername = configData.traktUsername || configData.TraktUsername || "";
+    const traktAccessToken = configData.TraktAccessToken || "";
+    const traktClientId = DEFAULT_TRAKT_CLIENT_ID;
 
     if (!geminiKey || geminiKey.length < 10) {
       logger.error("Invalid or missing Gemini API key");
@@ -2950,12 +3366,20 @@ const catalogHandler = async function (args, req) {
     if (isRecommendation) {
 
       // Make the genre discovery API call
-      const discoveryResult = await discoverTypeAndGenres(
-        searchQuery,
-        geminiKey,
-        geminiModel
-      );
-      discoveredGenres = discoveryResult.genres;
+      try {
+        const discoveryResult = await discoverTypeAndGenres(
+          searchQuery,
+          geminiKey,
+          geminiModel
+        );
+        discoveredGenres = discoveryResult.genres;
+      } catch (error) {
+        logger.warn("Genre discovery failed, continuing with defaults", {
+          error: error.message,
+          searchQuery,
+        });
+        // Defaults already set: discoveredType = type, discoveredGenres = []
+      }
 
       // Log if we couldn't discover any genres for a recommendation query
       if (discoveredGenres.length === 0) {
@@ -2991,6 +3415,19 @@ const catalogHandler = async function (args, req) {
           type === "movie" ? "movies" : "shows",
           configData
         );
+
+        logger.agent('TRAKT_FETCH_RESULT', {
+          traktDataExists: !!traktData,
+          watchedCount: traktData?.watched?.length ?? 0,
+          ratedCount: traktData?.rated?.length ?? 0,
+          historyCount: traktData?.history?.length ?? 0,
+          preferencesExists: !!traktData?.preferences,
+          isIncrementalUpdate: traktData?.isIncrementalUpdate ?? null,
+          watchedSample: (traktData?.watched || []).slice(0, 2).map(item => {
+            const media = item?.movie || item?.show;
+            return { title: media?.title, year: media?.year, tmdb: media?.ids?.tmdb, imdb: media?.ids?.imdb, type: item?.movie ? 'movie' : 'show' };
+          }),
+        });
 
         // Filter Trakt data based on discovered genres if we have any
         if (traktData) {
@@ -3047,6 +3484,12 @@ const catalogHandler = async function (args, req) {
             );
           }
         }
+      } else {
+        logger.agent('TRAKT_FETCH_SKIPPED', {
+          hasTraktClientId: !!DEFAULT_TRAKT_CLIENT_ID,
+          hasTraktAccessToken: !!configData.TraktAccessToken,
+          reason: !DEFAULT_TRAKT_CLIENT_ID ? 'missing_TRAKT_CLIENT_ID_env' : 'missing_user_TraktAccessToken',
+        });
       }
     }
 
@@ -3204,179 +3647,199 @@ const catalogHandler = async function (args, req) {
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const genreCriteria = extractGenreCriteria(searchQuery);
-      const currentYear = new Date().getFullYear();
 
-      let franchiseInstruction = `your TOP PRIORITY is to list ALL official mainline movies from that franchise, followed by any relevant spin-offs or related content.`;
+    const agentSearchTMDB = (query, mediaType, year) =>
+      searchTMDB(query, mediaType, year, tmdbKey, language, includeAdult);
 
-      if (type === 'series') {
-        franchiseInstruction = `your TOP PRIORITY is to provide a **comprehensive list** of ALL television content related to that franchise. Your search MUST include, but is not limited to:
-        - Official narrative series and mini-series (both live-action and animated).
-        - Documentary series (e.g., 'making of' or historical series like 'Icons Unearthed').
-        - Competition or reality shows (e.g., 'Hogwarts Tournament of Houses', 'Wizards of Baking').
-        - Any related TV specials or one-off televised events.`;
-      }
+    const agentDependencyBundle = {
+      geminiApiKey: geminiKey,
+      geminiModel,
+      modelName: geminiModel,
+      userQuery: searchQuery,
+      type,
+      searchTMDB: agentSearchTMDB,
+      tmdbApiKey: tmdbKey,
+      traktUsername,
+      traktAccessToken,
+      traktClientId,
+      traktAuth: {
+        username: traktUsername,
+        accessToken: traktAccessToken,
+        clientId: traktClientId,
+      },
+      fetchTraktWatchedAndRated,
+      traktWatchedFetcher: fetchTraktWatchedAndRated,
+      isItemWatchedOrRated,
+      processPreferencesInParallel,
+      fetchTraktFavorites,
+      tmdbCache,
+      tmdbDetailsCache,
+      aiRecommendationsCache,
+      traktCache,
+      traktRawDataCache,
+      favoritesCache: traktCache,
+      favoritesCacheTtlMs: TRAKT_CACHE_DURATION,
+      logger,
+      toolDeclarations,
+    };
 
-      let promptText = [
-        `You are a ${type} recommendation expert. Analyze this query: "${searchQuery}"`,
-        "",
-        "QUERY ANALYSIS:",
-      ];
+    let agentRecommendations = null;
+    let useAgentRecommendations = false;
+    let agentFallbackReason = "";
 
-      // Add query analysis section
-      if (isRecommendation && discoveredGenres.length > 0) {
-        promptText.push(`Discovered genres: ${discoveredGenres.join(", ")}`);
-      } else if (genreCriteria?.include?.length > 0) {
-        promptText.push(
-          `Requested genres: ${genreCriteria.include.join(", ")}`
-        );
-      }
-      if (genreCriteria?.mood?.length > 0) {
-        promptText.push(`Mood/Style: ${genreCriteria.mood.join(", ")}`);
-      }
-      promptText.push("");
+    if (isRecommendation) {
+      const hasTraktAuth = !!(traktClientId && traktUsername && traktAccessToken);
 
-      if (traktData) {
-        const { preferences } = traktData;
+      if (hasTraktAuth) {
+        const traktWatchedItems = Array.isArray(traktData?.watched) ? traktData.watched : [];
+        const traktRatedItems = Array.isArray(traktData?.rated) ? traktData.rated : [];
+         const traktWatchedIdSet = buildMediaIdentitySet(traktWatchedItems);
+         const traktRatedIdSet = buildMediaIdentitySet(traktRatedItems);
+         const doNotRecommend = buildDoNotRecommendList(traktWatchedItems, traktRatedItems);
 
-        // For recommendation queries, use the filtered Trakt data if available,
-        // otherwise use all Trakt data when no specific genres are discovered
-        if (isRecommendation) {
-          // If we have filtered Trakt data (specific genres), use it
-          // Otherwise, use all Trakt data (when no specific genres are discovered)
-          const { recentlyWatched, highlyRated, lowRated } =
-            filteredTraktData || {
-              recentlyWatched: traktData.watched?.slice(0, 100) || [],
-              highlyRated: (traktData.rated || [])
-                .filter((item) => item.rating >= 4)
-                .slice(0, 25),
-              lowRated: (traktData.rated || [])
-                .filter((item) => item.rating <= 2)
-                .slice(0, 25),
-            };
+         logger.agent('TRAKT_IDENTITY_SETS', {
+           traktWatchedIdSetSize: traktWatchedIdSet.size,
+           traktRatedIdSetSize: traktRatedIdSet.size,
+           doNotRecommendCount: doNotRecommend.length,
+           doNotRecommendSample: doNotRecommend.slice(0, 5),
+           watchedIdSample: [...traktWatchedIdSet].slice(0, 5),
+         });
 
-          // Calculate genre overlap if we have discovered genres
-          let genreRecommendationStrategy = "";
-          if (discoveredGenres.length > 0) {
-            const queryGenres = new Set(
-              discoveredGenres.map((g) => g.toLowerCase())
-            );
-            const userGenres = new Set(
-              preferences.genres.map((g) => g.genre.toLowerCase())
-            );
-            const overlap = [...queryGenres].filter((g) => userGenres.has(g));
+         logger.info("Trakt identity sets built for agent", {
+           watchedSize: traktWatchedIdSet.size,
+           ratedSize: traktRatedIdSet.size,
+           doNotRecommendCount: doNotRecommend.length,
+           traktUsername,
+         });
 
-            // Check if user has watched many movies in the requested genres
-            const genreWatchCount = recentlyWatched.filter((item) => {
-              const media = item.movie || item.show;
-              return (
-                media.genres &&
-                media.genres.some((g) => queryGenres.has(g.toLowerCase()))
-              );
-            }).length;
+         if (hasTraktAuth && traktWatchedIdSet.size === 0 && traktRatedIdSet.size === 0) {
+           logger.agent('TRAKT_WARNING_EMPTY_SETS', {
+             message: 'Trakt auth is present but watched/rated sets are EMPTY. Agent will not filter any recommendations.',
+             traktUsername,
+             traktDataWasNull: traktData === null || traktData === undefined,
+             traktDataWatched: traktData?.watched?.length ?? 'undefined',
+             traktDataRated: traktData?.rated?.length ?? 'undefined',
+           });
+         }
 
-            const hasWatchedManyInGenre = genreWatchCount > 10;
+         const filterCandidates = createFilterCandidates({
+          traktWatchedIdSet,
+          traktRatedIdSet,
+        });
 
-            if (overlap.length > 0) {
-              if (hasWatchedManyInGenre) {
-                genreRecommendationStrategy =
-                  "The user has watched many movies in the requested genres and these genres match their preferences. " +
-                  "Focus on finding less obvious, unique, or newer titles in these genres that they might have missed. " +
-                  "Consider acclaimed international films, indie gems, or cult classics that fit the genre requirements.";
-              } else {
-                genreRecommendationStrategy =
-                  "Since the requested genres match some of the user's preferred genres, " +
-                  "prioritize recommendations that combine these interests while maintaining the specific genre requirements.";
-              }
-            } else {
-              genreRecommendationStrategy =
-                "Although the requested genres differ from the user's usual preferences, " +
-                "try to find high-quality recommendations that might bridge their interests with the requested genres.";
+      logger.info("agent recommendation path starting", {
+        query: searchQuery,
+        type,
+        hasTraktAuth,
+        traktUsername,
+        numResults,
+        doNotRecommendCount: doNotRecommend.length,
+      });
+
+      logger.agent("AGENT_DISPATCH", {
+        query: searchQuery,
+        traktUsername,
+        numResults,
+        watchedSize: traktWatchedIdSet.size,
+        ratedSize: traktRatedIdSet.size,
+      });
+
+      try {
+          const agentResult = await runAgentLoop({
+            ...agentDependencyBundle,
+            numResults,
+            traktWatchedIdSet,
+            traktRatedIdSet,
+            doNotRecommend,
+            filterCandidates,
+            executeTools: (toolCalls, runtimeDeps = {}) =>
+              executeAgentTools(toolCalls, {
+                ...agentDependencyBundle,
+                ...runtimeDeps,
+                traktWatchedFetcher:
+                  runtimeDeps.traktWatchedFetcher || fetchTraktWatchedAndRated,
+                traktFavoritesFetcher:
+                  runtimeDeps.traktFavoritesFetcher || fetchTraktFavorites,
+                searchTMDB: runtimeDeps.searchTMDB || agentSearchTMDB,
+              }),
+          });
+
+          const agentRecommendationsList = Array.isArray(agentResult?.recommendations)
+            ? agentResult.recommendations
+            : [];
+          const agentResultCount = agentRecommendationsList.length;
+          const agentReason = agentResult?.reason || "";
+          const agentSucceededWithResults =
+            !!agentResult?.success && agentResultCount > 0;
+          const agentSucceededPartially =
+            !!agentResult?.success &&
+            agentResultCount > 0 &&
+            (agentReason === "agent_stuck" || agentReason === "max_turns_exceeded");
+
+          logger.agent("AGENT_RESULT", {
+            query: searchQuery,
+            status: agentResult?.success ? "success" : "failure",
+            recommendationCount: agentResultCount,
+            terminationReason: agentReason || null,
+          });
+
+          if (agentSucceededWithResults || agentSucceededPartially) {
+            agentRecommendations = agentRecommendationsList;
+            useAgentRecommendations = true;
+            logger.info("Agent recommendation path selected", {
+              query: searchQuery,
+              type,
+              collectedCount: agentResultCount,
+              requestedCount: numResults,
+              reason: agentReason || undefined,
+            });
+            if (agentResultCount < numResults) {
+              logger.warn("Agent recommendation path returned fewer results than requested", {
+                query: searchQuery,
+                type,
+                collectedCount: agentResultCount,
+                requestedCount: numResults,
+                reason: agentReason || "shorter_than_requested",
+              });
             }
+          } else {
+            agentFallbackReason = agentResult?.reason || "agent_returned_failure";
+            logger.agent("AGENT_FALLBACK", {
+              query: searchQuery,
+              reason: agentFallbackReason,
+            });
+            logger.warn("agent recommendation path falling back", {
+              query: searchQuery,
+              type,
+              reason: agentFallbackReason,
+            });
           }
+        } catch (error) {
+          agentFallbackReason = error.message || "agent_threw";
+          logger.agent("AGENT_FALLBACK", {
+            query: searchQuery,
+            reason: agentFallbackReason,
+          });
+          logger.warn("agent recommendation path falling back", {
+            query: searchQuery,
+            type,
+            reason: agentFallbackReason,
+            stack: error.stack,
+          });
+        }
+      } else {
+        logger.info("Skipping agent recommendation path", {
+          query: searchQuery,
+          type,
+          reason: "Trakt auth not connected",
+          hasTraktClientId: !!traktClientId,
+          hasTraktUsername: !!traktUsername,
+          hasTraktAccessToken: !!traktAccessToken,
+        });
+      }
+    }
 
-          promptText.push(
-            "USER'S WATCH HISTORY AND PREFERENCES (FILTERED BY RELEVANT GENRES):",
-            ""
-          );
-
-          if (recentlyWatched.length > 0) {
-            promptText.push(
-              "Recently watched in these genres:",
-              recentlyWatched
-                .slice(0, 25)
-                .map((item) => {
-                  const media = item.movie || item.show;
-                  return `- ${media.title} (${media.year}) - ${
-                    media.genres?.join(", ") || "N/A"
-                  }`;
-                })
-                .join("\n")
-            );
-            promptText.push("");
-          }
-
-          if (highlyRated.length > 0) {
-            promptText.push(
-              "Highly rated (4-5 stars) in these genres:",
-              highlyRated
-                .slice(0, 25)
-                .map((item) => {
-                  const media = item.movie || item.show;
-                  return `- ${media.title} (${item.rating}/5) - ${
-                    media.genres?.join(", ") || "N/A"
-                  }`;
-                })
-                .join("\n")
-            );
-            promptText.push("");
-          }
-
-          if (lowRated.length > 0) {
-            promptText.push(
-              "Low rated (1-2 stars) in these genres:",
-              lowRated
-                .slice(0, 15)
-                .map((item) => {
-                  const media = item.movie || item.show;
-                  return `- ${media.title} (${item.rating}/5) - ${
-                    media.genres?.join(", ") || "N/A"
-                  }`;
-                })
-                .join("\n")
-            );
-            promptText.push("");
-          }
-
-          // Only include top genres if the user isn't already searching for specific genres
-          if (discoveredGenres.length === 0) {
-            promptText.push(
-              "Top genres:",
-              preferences.genres
-                .map((g) => `- ${g.genre} (Score: ${g.count.toFixed(2)})`)
-                .join("\n"),
-              ""
-            );
-          }
-
-          promptText.push(
-            "Favorite actors:",
-            preferences.actors
-              .map((a) => `- ${a.actor} (Score: ${a.count.toFixed(2)})`)
-              .join("\n"),
-            "",
-            "Preferred directors:",
-            preferences.directors
-              .map((d) => `- ${d.director} (Score: ${d.count.toFixed(2)})`)
-              .join("\n"),
-            "",
-            preferences.yearRange
-              ? `User tends to watch content from ${preferences.yearRange.start} to ${preferences.yearRange.end}, with a preference for ${preferences.yearRange.preferred}`
-              : "",
-            "",
-            "RECOMMENDATION STRATEGY:",
-            genreRecommendationStrategy ||
+    /* try {
               "Balance user preferences with query requirements",
             "1. Focus on the specific requirements from the query (genres, time period, mood)",
             "2. Use user's preferences to refine choices within those requirements",
@@ -3505,75 +3968,223 @@ const catalogHandler = async function (args, req) {
       });
 
       // Use withRetry for the Gemini API call
-      const rawText = await withRetry(
-        async () => {
-          try {
-            const config = {
-              responseMimeType: "application/json",
-              responseJsonSchema: {
-                type: "object",
-                properties: {
-                  recommendations: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        type: { type: "string", enum: ["movie", "series"] },
-                        name: { type: "string" },
-                        year: { type: "integer" },
+      let rawText;
+      try {
+        rawText = await withRetry(
+          async () => {
+            try {
+              const config = {
+                responseMimeType: "application/json",
+                responseJsonSchema: {
+                  type: "object",
+                  properties: {
+                    recommendations: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          type: { type: "string", enum: ["movie", "series"] },
+                          name: { type: "string" },
+                          year: { type: "integer" },
+                        },
+                        required: ["type", "name", "year"],
+                        propertyOrdering: ["type", "name", "year"],
                       },
-                      required: ["type", "name", "year"],
-                      propertyOrdering: ["type", "name", "year"],
                     },
                   },
+                  required: ["recommendations"],
+                  propertyOrdering: ["recommendations"],
                 },
-                required: ["recommendations"],
-                propertyOrdering: ["recommendations"],
-              },
-            };
+              };
 
-            if (/2\.5|[3-9]\./i.test(geminiModel)) {
-              config.thinkingConfig = { thinkingBudget: 1024 };
+              if (/2\.5|[3-9]\./i.test(geminiModel)) {
+                config.thinkingConfig = { thinkingBudget: 1024 };
+              }
+
+              const aiResult = await ai.models.generateContent({
+                model: geminiModel,
+                config,
+                contents: promptText,
+              });
+              const responseText = aiResult.text.trim();
+
+              logger.info("Gemini API response", {
+                duration: `${Date.now() - startTime}ms`,
+                promptTokens: aiResult.promptFeedback?.tokenCount,
+                candidates: aiResult.candidates?.length,
+                safetyRatings: aiResult.candidates?.[0]?.safetyRatings,
+                responseTextLength: responseText.length,
+                responseTextSample:
+                  responseText.substring(0, 100) +
+                  (responseText.length > 100 ? "..." : ""),
+              });
+
+              return aiResult.text;
+            } catch (error) {
+              logger.error("Gemini API call failed", {
+                error: error.message,
+                status: error.httpStatus || 500,
+                stack: error.stack,
+              });
+              error.status = error.httpStatus || 500;
+              throw error;
             }
-
-            const aiResult = await ai.models.generateContent({
-              model: geminiModel,
-              config,
-              contents: promptText,
-            });
-            const responseText = aiResult.text.trim();
-
-            logger.info("Gemini API response", {
-              duration: `${Date.now() - startTime}ms`,
-              promptTokens: aiResult.promptFeedback?.tokenCount,
-              candidates: aiResult.candidates?.length,
-              safetyRatings: aiResult.candidates?.[0]?.safetyRatings,
-              responseTextLength: responseText.length,
-              responseTextSample:
-                responseText.substring(0, 100) +
-                (responseText.length > 100 ? "..." : ""),
-            });
-
-            return aiResult.text;
-          } catch (error) {
-            logger.error("Gemini API call failed", {
-              error: error.message,
-              status: error.httpStatus || 500,
-              stack: error.stack,
-            });
-            error.status = error.httpStatus || 500;
-            throw error;
+          },
+          {
+            maxRetries: 3,
+            initialDelay: 2000,
+            maxDelay: 10000,
+            // Don't retry 400 errors (bad requests)
+            shouldRetry: (error) => !error.status || error.status !== 400,
+            operationName: "Gemini API call",
           }
-        },
-        {
-          maxRetries: 3,
-          initialDelay: 2000,
-          maxDelay: 10000,
-          // Don't retry 400 errors (bad requests)
-          shouldRetry: (error) => !error.status || error.status !== 400,
-          operationName: "Gemini API call",
+        );
+      } catch (error) {
+        logger.warn("Gemini linear recommendation call failed, returning empty catalog", {
+          error: error.message,
+          searchQuery,
+        });
+        rawText = JSON.stringify({ recommendations: [] });
+      }
+
+      */
+
+      let rawText;
+      if (useAgentRecommendations) {
+        rawText = JSON.stringify({ recommendations: agentRecommendations });
+        logger.info("Using agent-produced recommendations for downstream enrichment", {
+          query: searchQuery,
+          type,
+          recommendationCount: agentRecommendations.length,
+        });
+      } else {
+        const ai = new GoogleGenAI({ apiKey: geminiKey });
+        const genreCriteria = extractGenreCriteria(searchQuery);
+        const promptText = buildLinearPrompt({
+          query: searchQuery,
+          type,
+          numResults,
+          discoveredGenres,
+          genreCriteria,
+          traktData,
+          tmdbInitialResults,
+          isRecommendation,
+        });
+
+        logger.info("Making Gemini API call", {
+          model: geminiModel,
+          query: searchQuery,
+          type,
+          genreCriteria,
+          numResults,
+        });
+
+        logger.agent("LINEAR_PROMPT", {
+          query: searchQuery,
+          type,
+          numResults,
+          promptText,
+        });
+
+        try {
+          rawText = await withRetry(
+            async () => {
+              try {
+                const config = {
+                  responseMimeType: "application/json",
+                  responseJsonSchema: {
+                    type: "object",
+                    properties: {
+                      recommendations: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            type: { type: "string", enum: ["movie", "series"] },
+                            name: { type: "string" },
+                            year: { type: "integer" },
+                          },
+                          required: ["type", "name", "year"],
+                        },
+                      },
+                    },
+                    required: ["recommendations"],
+                  },
+                };
+
+                if (/2\.5|[3-9]\.\]/i.test(geminiModel)) {
+                  config.thinkingConfig = { thinkingBudget: 1024 };
+                }
+
+                const aiResult = await ai.models.generateContent({
+                  model: geminiModel,
+                  config,
+                  contents: promptText,
+                });
+
+                const responseText = aiResult.text.trim();
+                logger.agent("LINEAR_RESPONSE", {
+                  query: searchQuery,
+                  type,
+                  numResults,
+                  responseText,
+                  tokenUsage: aiResult.usageMetadata || {
+                    promptTokenCount: aiResult.promptFeedback?.tokenCount ?? null,
+                  },
+                });
+                logger.info("Gemini API response", {
+                  duration: `${Date.now() - startTime}ms`,
+                  promptTokens: aiResult.promptFeedback?.tokenCount,
+                  candidates: aiResult.candidates?.length,
+                  responseTextLength: responseText.length,
+                });
+
+                return aiResult.text;
+              } catch (error) {
+                logger.agent("LINEAR_ERROR", {
+                  query: searchQuery,
+                  type,
+                  numResults,
+                  error: {
+                    message: error.message,
+                    status: error.httpStatus || 500,
+                    stack: error.stack,
+                  },
+                });
+                logger.error("Gemini API call failed", {
+                  error: error.message,
+                  status: error.httpStatus || 500,
+                  stack: error.stack,
+                });
+                error.status = error.httpStatus || 500;
+                throw error;
+              }
+            },
+            {
+              maxRetries: 3,
+              initialDelay: 2000,
+              maxDelay: 10000,
+              shouldRetry: (error) => !error.status || error.status !== 400,
+              operationName: "Gemini API call",
+            }
+          );
+        } catch (error) {
+          logger.agent("LINEAR_ERROR", {
+            query: searchQuery,
+            type,
+            numResults,
+            error: {
+              message: error.message,
+              stack: error.stack,
+            },
+          });
+          logger.warn("Gemini linear recommendation call failed, returning empty catalog", {
+            error: error.message,
+            searchQuery,
+          });
+          rawText = JSON.stringify({ recommendations: [] });
         }
-      );
+      }
 
       // Process the response JSON
       let parsed;
@@ -3622,17 +4233,25 @@ const catalogHandler = async function (args, req) {
           }
 
           if (lineType === type && name && yearNum) {
-            const item = {
+            const tmdbId = Number.parseInt(item?.tmdb_id, 10);
+            const imdbIdValue = item?.imdb_id;
+            const imdbId =
+              imdbIdValue !== undefined && imdbIdValue !== null && String(imdbIdValue).trim()
+                ? String(imdbIdValue).trim()
+                : null;
+            const recommendation = {
               name,
               year: yearNum,
               type,
               id: `ai_${type}_${name
                 .toLowerCase()
                 .replace(/[^a-z0-9]+/g, "_")}`,
+              ...(Number.isFinite(tmdbId) ? { tmdb_id: tmdbId } : {}),
+              ...(imdbId ? { imdb_id: imdbId } : {}),
             };
 
-            if (type === "movie") recommendations.movies.push(item);
-            else if (type === "series") recommendations.series.push(item);
+            if (type === "movie") recommendations.movies.push(recommendation);
+            else if (type === "series") recommendations.series.push(recommendation);
 
             validRecommendations++;
           }
@@ -3816,6 +4435,8 @@ const catalogHandler = async function (args, req) {
           year: r.year,
           type: r.type,
           id: r.id,
+          tmdb_id: r.tmdb_id,
+          imdb_id: r.imdb_id,
         })),
       });
 
@@ -3844,6 +4465,8 @@ const catalogHandler = async function (args, req) {
           name: r.name,
           year: r.year,
           type: r.type,
+          tmdb_id: r.tmdb_id,
+          imdb_id: r.imdb_id,
         })),
         convertedMetas: metas.map((m) => ({
           id: m.id,
@@ -4028,6 +4651,13 @@ const metaHandler = async function (args) {
       ]}
       `;
 
+      logger.agent("SIMILAR_PROMPT", {
+        sourceTitle,
+        sourceYear,
+        numResults,
+        promptText,
+      });
+
       const ai = new GoogleGenAI({ apiKey: GeminiApiKey });
 
       const config = {
@@ -4059,23 +4689,51 @@ const metaHandler = async function (args) {
         config.thinkingConfig = { thinkingBudget: 1024 };
       }
       
-      const aiResult = await withRetry(
-        async () => {
-          return await ai.models.generateContent({
-            model: modelName,
-            config,
-            contents: promptText,
-          });
-        },
-        {
-          maxRetries: 3,
-          baseDelay: 1000,
-          shouldRetry: (error) => !error.status || error.status !== 400,
-          operationName: "Gemini API call (similar content)"
-        }
-      );
+      let aiResult;
+      try {
+        aiResult = await withRetry(
+          async () => {
+            return await ai.models.generateContent({
+              model: modelName,
+              config,
+              contents: promptText,
+            });
+          },
+          {
+            maxRetries: 3,
+            baseDelay: 1000,
+            shouldRetry: (error) => !error.status || error.status !== 400,
+            operationName: "Gemini API call (similar content)"
+          }
+        );
+      } catch (error) {
+        logger.agent("SIMILAR_ERROR", {
+          sourceTitle,
+          sourceYear,
+          numResults,
+          error: {
+            message: error.message,
+            stack: error.stack,
+          },
+        });
+        logger.warn("Gemini similar content call failed, returning empty recommendations", {
+          error: error.message,
+          sourceTitle,
+        });
+        return { meta: null };
+      }
       
       const responseText = aiResult.text.trim();
+
+      logger.agent("SIMILAR_RESPONSE", {
+        sourceTitle,
+        sourceYear,
+        numResults,
+        responseText,
+        tokenUsage: aiResult.usageMetadata || {
+          promptTokenCount: aiResult.promptFeedback?.tokenCount ?? null,
+        },
+      });
 
       let parsed;
       try {
