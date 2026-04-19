@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "AI-powered movie and series recommendations for Stremio",
   "main": "server.js",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "start": "node server.js",
     "start:dev": "ENABLE_LOGGING=true node server.js"

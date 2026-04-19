@@ -20,8 +20,8 @@ For deep work on a specific folder, also read that folder's `codemap.md`.
 ## Commands
 
 ```bash
-npm start              # Production: node server.js
-npm run start:dev      # Dev with logging (uses ENABLE_LOGGING=true)
+pnpm start              # Production: node server.js
+pnpm start:dev         # Dev with logging (uses ENABLE_LOGGING=true)
 ```
 
 > **Windows gotcha**: `start:dev` uses Unix-style `ENABLE_LOGGING=true node server.js` — it will fail on Windows cmd/PowerShell. Use `$env:ENABLE_LOGGING="true"; node server.js` or install `cross-env`.
@@ -56,9 +56,9 @@ Env is loaded via `dotenv` (gracefully skipped if `.env` is absent).
 
 ## Deployment
 
-- **Docker**: `Dockerfile` uses `node:23`, exposes port `7000`, sets `NODE_ENV=production`.
+- **Docker**: `Dockerfile` uses `node:23` with corepack + pnpm, exposes port `7000`, sets `NODE_ENV=production`.
 - **PM2**: `ecosystem.config.js` — fork mode, single instance, 2GB memory limit, logs to `logs/`.
-- **Gitignored artifacts**: `node_modules/`, `.env`, `logs/`, `trakt_tokens.db`, `cache_data/` (implicit — created at runtime).
+- **Gitignored artifacts**: `node_modules/`, `.env`, `logs/`, `trakt_tokens.db`, `cache_data/`, `pnpm-lock.yaml` (implicit — created at runtime).
 
 ## Conventions
 
