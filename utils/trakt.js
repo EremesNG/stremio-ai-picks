@@ -18,7 +18,7 @@ function getUserId(deps = {}) {
 
 function buildTraktHeaders(deps = {}) {
   const headers = {
-    "User-Agent": "stremio-ai-search",
+    "User-Agent": "stremio-ai-picks",
     "trakt-api-version": "2",
     "trakt-api-key": deps.traktClientId,
     "Content-Type": "application/json",

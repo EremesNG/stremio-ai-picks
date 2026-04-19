@@ -193,9 +193,9 @@ const similarContentCache = new SimpleLRUCache({
 
 const HOST = process.env.HOST
   ? `https://${process.env.HOST}`
-  : "https://stremio.itcon.au";
+  : "https://github.com/EremesNG/stremio-ai-picks";
 const PORT = 7000;
-const BASE_PATH = "/aisearch";
+const BASE_PATH = "";
 
 setInterval(() => {
   const tmdbStats = {
@@ -717,7 +717,7 @@ async function fetchTraktIncrementalData(
 
   const headers = {
     "Content-Type": "application/json",
-    "User-Agent": "stremio-ai-search",
+    "User-Agent": "stremio-ai-picks",
     "trakt-api-version": "2",
     "trakt-api-key": clientId,
     Authorization: `Bearer ${accessToken}`,
@@ -858,7 +858,7 @@ async function fetchTraktWatchedAndRated(
 
       const headers = {
         "Content-Type": "application/json",
-        "User-Agent": "stremio-ai-search",
+        "User-Agent": "stremio-ai-picks",
         "trakt-api-version": "2",
         "trakt-api-key": clientId,
         Authorization: `Bearer ${accessToken}`,
@@ -1337,9 +1337,9 @@ async function searchTMDBExactMatch(title, type, tmdbKey, language = "en-US", in
 }
 
 const manifest = {
-  id: "au.itcon.aisearch",
+  id: "eremesng.aipicks",
   version: "1.0.65",
-  name: "AI Search",
+  name: "AI Picks",
   description: "AI-powered movie and series recommendations",
   resources: [
     "catalog",
@@ -1354,26 +1354,26 @@ const manifest = {
   catalogs: [
     {
       type: "movie",
-      id: "aisearch.top",
+      id: "aipicks.top",
       name: "AI Movie Search",
       extra: [{ name: "search", isRequired: true }],
       isSearch: true,
     },
     {
       type: "series",
-      id: "aisearch.top",
+      id: "aipicks.top",
       name: "AI Series Search",
       extra: [{ name: "search", isRequired: true }],
       isSearch: true,
     },
     {
       type: "movie",
-      id: "aisearch.recommend",
+      id: "aipicks.recommend",
       name: "AI Movie Recommendations",
     },
     {
       type: "series",
-      id: "aisearch.recommend",
+      id: "aipicks.recommend",
       name: "AI Series Recommendations",
     },
   ],
@@ -1384,7 +1384,7 @@ const manifest = {
   },
   logo: `${HOST}${BASE_PATH}/logo.png`,
   background: `${HOST}${BASE_PATH}/bg.jpg`,
-  contactEmail: "hi@itcon.au",
+  contactEmail: "eremesng@gmail.com",
 };
 
 const builder = new addonBuilder(manifest);
@@ -3160,7 +3160,7 @@ const catalogHandler = async function (args, req) {
     }
 
     if (!searchQuery) {
-      if (id.startsWith("aisearch.home.")) {
+      if (id.startsWith("aipicks.home.")) {
         isHomepageQuery = true;
         let homepageQueries = configData.HomepageQuery;
 
@@ -4581,7 +4581,7 @@ const streamHandler = async (args, req) => {
   const stremioUrlPrefix = isWeb ? "https://web.stremio.com/#" : "stremio://";
 
   const stream = {
-    name: "✨ AI Search",
+    name: "✨ AI Picks",
     description: "Similar movies and shows.",
     externalUrl: `${stremioUrlPrefix}/detail/${args.type}/ai-recs:${args.id}`,
     behaviorHints: {

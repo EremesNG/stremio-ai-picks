@@ -55,7 +55,7 @@ async function refreshTraktToken(username, refreshToken) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "stremio-ai-search",
+        "User-Agent": "stremio-ai-picks",
         "trakt-api-version": "2",
         "trakt-api-key": TRAKT_CLIENT_ID,
       },
@@ -63,7 +63,7 @@ async function refreshTraktToken(username, refreshToken) {
         refresh_token: refreshToken,
         client_id: process.env.TRAKT_CLIENT_ID,
         client_secret: process.env.TRAKT_CLIENT_SECRET,
-        redirect_uri: `${HOST}/aisearch/oauth/callback`,
+                redirect_uri: `${HOST}/oauth/callback`,
         grant_type: "refresh_token",
       }),
     });
@@ -98,8 +98,8 @@ const HOST = process.env.HOST
   ? (process.env.HOST.startsWith("http://") || process.env.HOST.startsWith("https://")
       ? process.env.HOST
       : `https://${process.env.HOST}`)
-  : "https://stremio.itcon.au";
-const BASE_PATH = "/aisearch";
+  : "https://github.com/EremesNG/stremio-ai-picks";
+const BASE_PATH = "";
 
 const DEFAULT_RPDB_KEY = process.env.RPDB_API_KEY;
 const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID;
@@ -107,9 +107,9 @@ const TRAKT_CLIENT_SECRET = process.env.TRAKT_CLIENT_SECRET;
 const TRAKT_API_BASE = "https://api.trakt.tv";
 
 const setupManifest = {
-  id: "au.itcon.aisearch",
+  id: "eremesng.aipicks",
   version: "1.0.65",
-  name: "AI Search",
+  name: "AI Picks",
   description: "AI-powered movie and series recommendations",
   logo: `${HOST}${BASE_PATH}/logo.png`,
   background: `${HOST}${BASE_PATH}/bg.jpg`,
@@ -131,14 +131,14 @@ const getConfiguredManifest = (geminiKey, tmdbKey) => ({
   catalogs: [
     {
       type: "movie",
-      id: "aisearch.top",
+      id: "aipicks.top",
       name: "AI Movie Search",
       extra: [{ name: "search", isRequired: true }],
       isSearch: true,
     },
     {
       type: "series",
-      id: "aisearch.top",
+      id: "aipicks.top",
       name: "AI Series Search",
       extra: [{ name: "search", isRequired: true }],
       isSearch: true,
@@ -305,7 +305,7 @@ async function startServer() {
                         }
 
                         const intent = determineIntentFromKeywords(query);
-                        const id_prefix = `aisearch.home.${index}`;
+                        const id_prefix = `aipicks.home.${index}`;
                         const name = title;
 
                         if (intent === 'movie' || intent === 'ambiguous') {
@@ -536,7 +536,7 @@ async function startServer() {
             let html = await fs.promises.readFile(templatePath, "utf8");
 
             html = html.replace('const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";', `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID || ""}";`);
-            html = html.replace('const HOST = "stremio.itcon.au";', `const HOST = "${HOST.replace(/^https?:\/\//, "")}";`);
+            html = html.replace('const HOST = "your-domain.com";', `const HOST = "${HOST.replace(/^https?:\/\//, "")}";`);
 
             res.setHeader("Content-Type", "text/html");
             res.send(html);
@@ -574,17 +574,17 @@ async function startServer() {
 
           // Exchange the code for an access token
            const tokenResponse = await fetch(
-             "https://api.trakt.tv/oauth/token",
-             {
-               method: "POST",
-               headers: {
-                 "Content-Type": "application/json",
-                 "User-Agent": "stremio-ai-search",
-                  "trakt-api-version": "2",
-                  "trakt-api-key": TRAKT_CLIENT_ID,
-                },
-                // Match the browser-originated redirect URI exactly, including when behind proxies.
-                // The callback is mounted under /aisearch, so use the active request base path here.
+              "https://api.trakt.tv/oauth/token",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "User-Agent": "stremio-ai-picks",
+                   "trakt-api-version": "2",
+                   "trakt-api-key": TRAKT_CLIENT_ID,
+                 },
+                  // Match the browser-originated redirect URI exactly, including when behind proxies.
+                  // Use the active request base path for the OAuth callback.
                 body: JSON.stringify({
                   code,
                   client_id: TRAKT_CLIENT_ID,
@@ -644,17 +644,17 @@ async function startServer() {
           return res.status(400).send("Invalid configuration format");
         }
 
-        (async () => {
-          try {
-            const templatePath = path.join(__dirname, "public", "configure.html");
-            let html = await fs.promises.readFile(templatePath, "utf8");
+         (async () => {
+           try {
+             const templatePath = path.join(__dirname, "public", "configure.html");
+             let html = await fs.promises.readFile(templatePath, "utf8");
 
-            html = html.replace('const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";', `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID || ""}";`);
-            html = html.replace('const HOST = "stremio.itcon.au";', `const HOST = "${HOST.replace(/^https?:\/\//, "")}";`);
-            html = html.replace(
-              /(<input\s+type="hidden"\s+id="existingConfigId"\s+name="existingConfigId"\s+value=")([^"]*)("\s*\/?>)/,
-              `$1${encryptedConfig}$3`
-            );
+             html = html.replace('const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";', `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID || ""}";`);
+             html = html.replace('const HOST = "your-domain.com";', `const HOST = "${HOST.replace(/^https?:\/\//, "")}";`);
+             html = html.replace(
+               /(<input\s+type="hidden"\s+id="existingConfigId"\s+name="existingConfigId"\s+value=")([^"]*)("\s*\/?>)/,
+               `$1${encryptedConfig}$3`
+             );
 
             res.setHeader("Content-Type", "text/html");
             res.send(html);
@@ -1082,19 +1082,19 @@ async function startServer() {
              return res.status(400).json({ error: "Missing refresh token" });
            }
 
-           const response = await fetch("https://api.trakt.tv/oauth/token", {
-             method: "POST",
-             headers: {
-               "Content-Type": "application/json",
-               "User-Agent": "stremio-ai-search",
-               "trakt-api-version": "2",
-               "trakt-api-key": TRAKT_CLIENT_ID,
-             },
+            const response = await fetch("https://api.trakt.tv/oauth/token", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "User-Agent": "stremio-ai-picks",
+                "trakt-api-version": "2",
+                "trakt-api-key": TRAKT_CLIENT_ID,
+              },
              body: JSON.stringify({
                refresh_token,
                client_id: TRAKT_CLIENT_ID,
                client_secret: TRAKT_CLIENT_SECRET,
-               redirect_uri: `${HOST}/aisearch/oauth/callback`,
+         redirect_uri: `${HOST}/oauth/callback`,
                grant_type: "refresh_token",
              }),
            });
@@ -1116,9 +1116,8 @@ async function startServer() {
     });
 
     app.use("/", addonRouter);
-    app.use(BASE_PATH, addonRouter);
 
-    app.post(["/encrypt", "/aisearch/encrypt"], express.json(), async (req, res) => {
+    app.post("/encrypt", express.json(), async (req, res) => {
       try {
         const { configData, traktAuthData } = req.body;
         if (!configData) {
@@ -1160,7 +1159,7 @@ async function startServer() {
       }
     });
 
-    app.post(["/decrypt", "/aisearch/decrypt"], express.json(), (req, res) => {
+    app.post("/decrypt", express.json(), (req, res) => {
       try {
         const { encryptedConfig } = req.body;
         if (!encryptedConfig) {
@@ -1190,7 +1189,7 @@ async function startServer() {
     });
 
     app.use(
-      ["/encrypt", "/decrypt", "/aisearch/encrypt", "/aisearch/decrypt"],
+      ["/encrypt", "/decrypt"],
       (req, res, next) => {
         res.header("Access-Control-Allow-Origin", "*");
         res.header(
@@ -1207,7 +1206,7 @@ async function startServer() {
       }
     );
 
-app.use(["/validate", "/aisearch/validate"], (req, res, next) => {
+app.use("/validate", (req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -1218,7 +1217,7 @@ app.use(["/validate", "/aisearch/validate"], (req, res, next) => {
   next();
 });
 
-app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) => {
+app.post("/validate", express.json(), async (req, res) => {
   const startTime = Date.now();
   try {
     const {

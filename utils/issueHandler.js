@@ -80,13 +80,13 @@ async function createGitHubIssue(data) {
     }
   }
 
-  body += `**Description:**\n${comments}\n\n`;
-  body += `---\n*Submitted via Stremio AI Search Addon*`;
+   body += `**Description:**\n${comments}\n\n`;
+   body += `---\n*Submitted via Stremio AI Picks Addon*`;
 
-  try {
-    const response = await fetch(
-      "https://api.github.com/repos/itcon-pty-au/stremio-ai-search/issues",
-      {
+   try {
+     const response = await fetch(
+       "https://api.github.com/repos/EremesNG/stremio-ai-picks/issues",
+       {
         method: "POST",
         headers: {
           Accept: "application/vnd.github.v3+json",

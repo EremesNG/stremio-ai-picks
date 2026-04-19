@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>AI Search Addon Configuration</title>
+    <title>AI Picks Addon Configuration</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
       :root {
@@ -569,15 +569,15 @@
   </head>
   <body>
     <div class="container">
-      <img src="logo.png" alt="AI Search" class="logo" />
-      <h1>Stremio AI Search</h1>
+      <img src="logo.png" alt="AI Picks" class="logo" />
+      <h1>Stremio AI Picks</h1>
 
-      <div style="text-align: center; margin-bottom: 20px">
-        <img
-          src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio.itcon.au%2Faisearch%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue"
-          alt="Stremio AI Search Queries"
-        />
-      </div>
+       <div style="text-align: center; margin-bottom: 20px">
+          <img
+            src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FEremesNG%2Fstremio-ai-picks%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue"
+            alt="Stremio AI Picks Queries"
+          />
+       </div>
 
       <form id="configForm">
         <!-- Basic Configuration (Always Visible) -->
@@ -1102,10 +1102,10 @@
     </div>
 
     <footer>
-      From the stables of ITCON . Made with love in Melbourne, AU<br />Submit
+      Made with <span class="heart">❤</span> by EremesNG<br />Submit
       feature requests, issues at
       <a
-        href="https://github.com/itcon-pty-au/stremio-ai-search"
+        href="https://github.com/EremesNG/stremio-ai-picks"
         target="_blank"
         class="github-link"
       >
@@ -1126,9 +1126,9 @@
     </footer>
 
     <script>
-      const addonName = "AI Search";
+      const addonName = "AI Picks";
       const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID"; // This will be replaced with the actual client ID from the server
-      const HOST = "stremio.itcon.au"; // This will be replaced with the actual host from the server
+      const HOST = "github.com/EremesNG/stremio-ai-picks"; // This will be replaced with the actual host from the server
 
       function setLoading(isLoading) {
         const configureBtn = document.getElementById("configureBtn");
@@ -1335,12 +1335,12 @@
             traktAuthData: traktAuthData, // This will be null if no new Trakt login happened
           };
 
-          // 4. Send the new payload to the server
-          const response = await fetch(`/aisearch/encrypt`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
+            // 4. Send the new payload to the server
+            const response = await fetch(`/encrypt`, {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify(payload),
+           });
 
           // --- Main Logic Change Ends Here ---
 
@@ -1348,11 +1348,11 @@
           const data = await response.json();
           if (!data.encryptedConfig) throw new Error("No encrypted configuration received");
 
-          const configId = data.encryptedConfig;
-          return {
-            stremio: `stremio://${window.location.host}/aisearch/${configId}/manifest.json`,
-            https: `https://${window.location.host}/aisearch/${configId}/manifest.json`,
-          };
+            const configId = data.encryptedConfig;
+            return {
+              stremio: `stremio://${window.location.host}/${configId}/manifest.json`,
+              https: `https://${window.location.host}/${configId}/manifest.json`,
+            };
         } catch (error) {
           showError("Error: " + error.message);
           return null;
@@ -1371,20 +1371,20 @@
           .value.trim();
         const fanartKey = document.getElementById("fanartKey").value.trim();
 
-        try {
-          const response = await fetch(`/aisearch/validate`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              GeminiApiKey: geminiKey,
-              TmdbApiKey: tmdbKey,
-              FanartApiKey: fanartKey,
-              TraktAccessToken: traktAccessToken,
-              TraktRefreshToken: traktRefreshToken,
-            }),
-          });
+          try {
+            const response = await fetch(`/validate`, {
+             method: "POST",
+             headers: {
+               "Content-Type": "application/json",
+             },
+             body: JSON.stringify({
+               GeminiApiKey: geminiKey,
+               TmdbApiKey: tmdbKey,
+               FanartApiKey: fanartKey,
+               TraktAccessToken: traktAccessToken,
+               TraktRefreshToken: traktRefreshToken,
+             }),
+           });
 
           const result = await response.json();
 
@@ -1527,39 +1527,36 @@
         toggleHomepageQueryVisibility(); // Set initial state on load
         document.getElementById('enableHomepage').addEventListener('change', toggleHomepageQueryVisibility);
 
-        // Check if we're in edit mode (URL contains a config ID)
-        const path = window.location.pathname;
-        const isDirectAccess =
-          path === "/aisearch/configure" || path === "/configure";
-        const configIdMatch = isDirectAccess
-          ? null
-          : path.match(
-              /\/aisearch\/([^\/]+)\/configure$|\/([^\/]+)\/configure$/
+         // Check if we're in edit mode (URL contains a config ID)
+         const path = window.location.pathname;
+         const isDirectAccess = path === "/configure";
+         const configIdMatch = isDirectAccess
+           ? null
+           : path.match(/\/([^\/]+)\/configure$/);
+
+         if (!isDirectAccess && configIdMatch) {
+           // Get the config ID from the capture group
+           const configId = configIdMatch[1];
+           console.log("Editing existing configuration:", configId);
+
+            // Fix image paths when in edit mode
+            const basePath = "";
+            document.querySelector(".logo").src = `${basePath}/logo.png`;
+            const bmcImg = document.querySelector(".bmc-button img");
+            if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
+
+           // Set the config ID to a hidden field
+           document.getElementById("existingConfigId").value = configId;
+
+            // Load the existing configuration
+            const baseUrl = window.location.origin;
+            const apiPath = "";
+            console.log(
+              "Fetching config from:",
+              `${baseUrl}${apiPath}/api/getConfig/${configId}`
             );
 
-        if (!isDirectAccess && configIdMatch) {
-          // Get the config ID from whichever capture group matched
-          const configId = configIdMatch[1] || configIdMatch[2];
-          console.log("Editing existing configuration:", configId);
-
-          // Fix image paths when in edit mode
-          const basePath = path.startsWith("/aisearch") ? "/aisearch" : "";
-          document.querySelector(".logo").src = `${basePath}/logo.png`;
-          const bmcImg = document.querySelector(".bmc-button img");
-          if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
-
-          // Set the config ID to a hidden field
-          document.getElementById("existingConfigId").value = configId;
-
-          // Load the existing configuration
-          const baseUrl = window.location.origin;
-          const apiPath = path.startsWith("/aisearch") ? "/aisearch" : "";
-          console.log(
-            "Fetching config from:",
-            `${baseUrl}${apiPath}/api/getConfig/${configId}`
-          );
-
-          fetch(`${baseUrl}${apiPath}/api/getConfig/${configId}`)
+            fetch(`${baseUrl}${apiPath}/api/getConfig/${configId}`)
             .then((response) => {
               console.log(
                 "Config fetch response:",
@@ -1688,15 +1685,15 @@
               alert(
                 "Failed to load the existing configuration. Please try again or create a new one."
               );
-            });
-        } else {
-          // Direct access to /aisearch/configure
-          // Fix image paths for direct access
-          const basePath = path.startsWith("/aisearch") ? "/aisearch" : "";
-          document.querySelector(".logo").src = `${basePath}/logo.png`;
-          const bmcImg = document.querySelector(".bmc-button img");
-          if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
-        }
+             });
+          } else {
+            // Direct access to /configure
+            // Fix image paths for direct access
+            const basePath = "";
+            document.querySelector(".logo").src = `${basePath}/logo.png`;
+            const bmcImg = document.querySelector(".bmc-button img");
+            if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
+          }
       });
 
 window.addEventListener("message", async function (event) {
@@ -1813,10 +1810,10 @@ window.addEventListener("message", async function (event) {
           includeAdult: document.getElementById("includeAdult").checked,
           filterWatched: document.getElementById("filterWatched").checked,
         };
-        sessionStorage.setItem("formData", JSON.stringify(formData));
+         sessionStorage.setItem("formData", JSON.stringify(formData));
 
-        const redirectUri = `${window.location.origin}/aisearch/oauth/callback`;
-        const state = Math.random().toString(36).substring(7);
+          const redirectUri = `${window.location.origin}/oauth/callback`;
+         const state = Math.random().toString(36).substring(7);
         sessionStorage.setItem("traktOAuthState", state);
 
         const width = Math.min(600, window.screen.width * 0.9);
@@ -2027,15 +2024,15 @@ window.addEventListener("message", async function (event) {
             recaptchaToken: recaptchaToken,
           };
 
-          console.log("Submitting form data:", formData);
+           console.log("Submitting form data:", formData);
 
-          const response = await fetch(`/aisearch/submit-issue`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(formData),
-          });
+            const response = await fetch(`/submit-issue`, {
+             method: "POST",
+             headers: {
+               "Content-Type": "application/json",
+             },
+             body: JSON.stringify(formData),
+           });
 
           const responseData = await response.json();
           console.log("Server response:", responseData);
@@ -2052,7 +2049,7 @@ window.addEventListener("message", async function (event) {
             `<p style="margin-bottom: 15px;">Thank you for your ${feedbackType}. Your feedback has been successfully submitted.</p>${
               responseData.issueUrl
                 ? `<p style="margin-bottom: 10px;">You can track the status of your ${feedbackType} at: <a href="${responseData.issueUrl}" target="_blank">${responseData.issueUrl}</a></p>`
-                : `<p style="margin-bottom: 0;">You can track all issues and ideas at <a href="https://github.com/itcon-pty-au/stremio-ai-search/issues" target="_blank">GitHub Issues</a></p>`
+                : `<p style="margin-bottom: 0;">You can track all issues and ideas at <a href="https://github.com/your-org/stremio-ai-search/issues" target="_blank">GitHub Issues</a></p>`
             }`,
             true
           );

@@ -3,7 +3,7 @@ const path = require("path");
 module.exports = {
   apps: [
     {
-      name: "stremio-ai-addon",
+      name: "stremio-ai-picks",
       script: "./server.js",
       cwd: ".",
       env: {
