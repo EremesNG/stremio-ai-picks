@@ -1,4 +1,5 @@
 const logger = require("./logger");
+const { normalizeMediaKey } = require("./trakt");
 
 const toolDeclarations = [
   {
@@ -35,6 +36,43 @@ const toolDeclarations = [
           default: "both",
         },
       },
+    },
+  },
+  {
+    name: "check_if_watched",
+    description:
+      "Check whether items have already been watched or rated by the user. Returns per-item watched/rated status for batches of up to 10 items.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        items: {
+          type: "ARRAY",
+          maxItems: 10,
+          items: {
+            type: "OBJECT",
+            properties: {
+              type: {
+                type: "STRING",
+              },
+              tmdb_id: {
+                type: "INTEGER",
+              },
+              imdb_id: {
+                type: "STRING",
+              },
+              title: {
+                type: "STRING",
+                description: "The title of the movie or series to check",
+              },
+              year: {
+                type: "INTEGER",
+              },
+            },
+            required: ["type", "title"],
+          },
+        },
+      },
+      required: ["items"],
     },
   },
 ];
@@ -218,6 +256,26 @@ function getLogger(deps = {}) {
   return deps.logger || logger || console;
 }
 
+function buildMediaIdentityKeys(normalized) {
+  const keys = [];
+
+  if (normalized?.type && normalized.tmdb_id != null) {
+    keys.push(`tmdb:${normalized.type}:${normalized.tmdb_id}`);
+  }
+
+  if (normalized?.imdb_id) {
+    keys.push(`imdb:${normalized.imdb_id}`);
+  }
+
+  if (normalized?.title) {
+    keys.push(
+      `title:${normalized.type || ""}:${normalized.title.trim().toLowerCase()}:${normalized.year ?? ""}`
+    );
+  }
+
+  return [...new Set(keys)].filter(Boolean);
+}
+
 async function callSearchTMDB(searchTMDB, args) {
   if (typeof searchTMDB !== "function") {
     throw new Error("searchTMDB dependency is required");
@@ -296,9 +354,31 @@ async function handleGetUserFavorites(args, deps) {
   };
 }
 
+async function handleCheckIfWatched(args, deps) {
+  const items = Array.isArray(args.items) ? args.items.slice(0, 10) : [];
+  const watchedIdSet = deps.traktWatchedIdSet instanceof Set ? deps.traktWatchedIdSet : new Set();
+  const ratedIdSet = deps.traktRatedIdSet instanceof Set ? deps.traktRatedIdSet : new Set();
+
+  return {
+    items: items.map((item) => {
+      const normalized = normalizeMediaKey(item);
+      const keys = buildMediaIdentityKeys(normalized);
+      const watched = keys.some((key) => watchedIdSet.has(key));
+      const rated = keys.some((key) => ratedIdSet.has(key));
+
+      return {
+        title: item?.title || "Unknown",
+        watched,
+        rated,
+      };
+    }),
+  };
+}
+
 const handlers = {
   search_tmdb: handleSearchTmdb,
   get_user_favorites: handleGetUserFavorites,
+  check_if_watched: handleCheckIfWatched,
 };
 
 async function executeTools(toolCalls, deps = {}) {

@@ -3750,7 +3750,6 @@ const catalogHandler = async function (args, req) {
             numResults,
             traktWatchedIdSet,
             traktRatedIdSet,
-            doNotRecommend,
             filterCandidates,
             executeTools: (toolCalls, runtimeDeps = {}) =>
               executeAgentTools(toolCalls, {

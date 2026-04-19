@@ -7,7 +7,7 @@ const {
 } = require("./prompts");
 const { normalizeMediaKey } = require("./trakt");
 
-const DEFAULT_MAX_TURNS = 4;
+const DEFAULT_MAX_TURNS = 6;
 
 const FUNCTION_CALLING_UNSUPPORTED_PATTERNS = [
   /function calling/i,
@@ -155,82 +155,6 @@ function normalizeIterable(value) {
   }
 
   return [value];
-}
-
-function toMediaKeyString(value) {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return String(value);
-  }
-
-  return "";
-}
-
-function normalizePromptDoNotRecommendItem(entry) {
-  if (!entry) {
-    return null;
-  }
-
-  if (typeof entry === "string" || typeof entry === "number") {
-    const key = toMediaKeyString(entry);
-    if (!key) {
-      return null;
-    }
-
-    const primaryMatch = key.match(/^(movie|series|show):(-?\d+)$/i);
-    if (primaryMatch) {
-      return {
-        type: primaryMatch[1].toLowerCase() === "movie" ? "movie" : "series",
-        tmdb_id: Number(primaryMatch[2]),
-      };
-    }
-
-    const imdbMatch = key.match(/^imdb:(.+)$/i);
-    if (imdbMatch) {
-      return {
-        imdb_id: imdbMatch[1].trim(),
-      };
-    }
-
-    return null;
-  }
-
-  if (typeof entry === "object") {
-    const normalized = normalizeMediaKey(entry);
-    return normalized && (normalized.type || normalized.tmdb_id || normalized.imdb_id)
-      ? normalized
-      : null;
-  }
-
-  return null;
-}
-
-function buildDoNotRecommendList(...sources) {
-  const deduped = new Map();
-
-  sources.flatMap(normalizeIterable).forEach((entry) => {
-    const normalized = normalizePromptDoNotRecommendItem(entry);
-    if (!normalized) {
-      return;
-    }
-
-    const key = [
-      normalized.type || "",
-      normalized.tmdb_id ?? "",
-      normalized.imdb_id || "",
-      normalized.title || "",
-      normalized.year ?? "",
-    ].join("|");
-
-    if (!deduped.has(key)) {
-      deduped.set(key, normalized);
-    }
-  });
-
-  return [...deduped.values()];
 }
 
 function getMediaIdentityKeys(item) {
@@ -516,21 +440,12 @@ async function runAgentLoop(dependencies = {}) {
     traktAccessToken,
   } = dependencies;
 
-  // 7.6 may pass Sets, Maps, arrays, or normalized item objects here. We only
-  // use them to seed the do-not-recommend prompt contract; filtering remains an
-  // injected responsibility.
   const resolvedNumResults = normalizeNumResults(numResults);
-  const doNotRecommend = buildDoNotRecommendList(
-    dependencies.doNotRecommend,
-    traktWatchedIdSet,
-    traktRatedIdSet
-  );
 
   logger.agent("LOOP_START", {
     query: userQuery,
     model: modelName,
     numResults: resolvedNumResults,
-    doNotRecommendCount: doNotRecommend?.length,
     traktWatchedCount:
       traktWatchedIdSet instanceof Set
         ? traktWatchedIdSet.size
@@ -554,6 +469,7 @@ async function runAgentLoop(dependencies = {}) {
   let droppedWatchedTotal = 0;
   let droppedNoIdTotal = 0;
   let droppedDuplicatesTotal = 0;
+  let loopTerminationReason = "max_turns_exceeded";
 
   function logSummary(success, reason, recommendations) {
     const summary = {
@@ -596,6 +512,118 @@ async function runAgentLoop(dependencies = {}) {
     }
   }
 
+  function processFinalTextResponse(textResponse, turn) {
+    const text = extractModelText(textResponse);
+
+    if (!text) {
+      logger.warn("Agent returned an empty turn", { turn });
+      return { success: false, reason: "empty_turn" };
+    }
+
+    let parsed;
+
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      logger.warn("Agent final output was not valid JSON", {
+        error: error.message,
+        turn,
+      });
+      logger.agent("LOOP_ERROR", {
+        turn,
+        error: error.message,
+        stack: error.stack,
+      });
+      return { success: false, reason: "invalid_final_json" };
+    }
+
+    const recommendations = normalizeRecommendationList(parsed);
+
+    if (typeof filterCandidates !== "function") {
+      return {
+        success: true,
+        recommendations: recommendations.slice(0, resolvedNumResults),
+      };
+    }
+
+    let filtered;
+
+    try {
+      filtered = filterCandidates(recommendations);
+    } catch (error) {
+      logger.error("Agent candidate filtering failed", {
+        error: error.message,
+        turn,
+      });
+      logger.agent("LOOP_ERROR", {
+        turn,
+        error: error.message,
+        stack: error.stack,
+      });
+      return { success: false, reason: "filter_candidates_failed" };
+    }
+
+    logger.agent("FILTER_RESULT", {
+      turn,
+      candidatesProposed: recommendations.length,
+      candidatesAccepted: normalizeDroppedItems(filtered?.unwatched).length,
+      candidatesRejected:
+        recommendations.length - normalizeDroppedItems(filtered?.unwatched).length,
+      rejectionReasons: {
+        droppedWatched: filtered?.droppedWatched,
+        droppedNoId: filtered?.droppedNoId,
+        droppedDuplicates: filtered?.droppedDuplicates,
+        rejectionReasons: filtered?.rejectionReasons || filtered?.reasons,
+      },
+    });
+
+    const rawUnwatched = normalizeDroppedItems(filtered?.unwatched);
+    const turnDroppedWatched = normalizeDroppedItems(filtered?.droppedWatched);
+    const turnDroppedWatchedCount =
+      typeof filtered?.droppedWatched === "number"
+        ? filtered.droppedWatched
+        : turnDroppedWatched.length;
+    const turnDroppedNoIdCount = countDroppedItems(filtered?.droppedNoId);
+    let turnDroppedDuplicateCount = countDroppedItems(filtered?.droppedDuplicates);
+
+    const novelUnwatched = [];
+    let crossTurnDuplicateCount = 0;
+
+    rawUnwatched.forEach((item) => {
+      if (isDuplicateAcrossTurns(item, proposedIdSet)) {
+        crossTurnDuplicateCount += 1;
+        return;
+      }
+
+      novelUnwatched.push(item);
+    });
+
+    turnDroppedDuplicateCount += crossTurnDuplicateCount;
+    droppedWatchedTotal += turnDroppedWatchedCount;
+    droppedNoIdTotal += turnDroppedNoIdCount;
+    droppedDuplicatesTotal += turnDroppedDuplicateCount;
+
+    recommendations.forEach((item) => addMediaIdentityKeys(proposedIdSet, item));
+
+    if (novelUnwatched.length > 0) {
+      const remainingSlots = Math.max(0, resolvedNumResults - collected.length);
+      collected.push(...novelUnwatched.slice(0, remainingSlots));
+    }
+
+    if (collected.length >= resolvedNumResults) {
+      return {
+        success: true,
+        recommendations: collected.slice(0, resolvedNumResults),
+      };
+    }
+
+    if (novelUnwatched.length === 0) {
+      return { success: true, recommendations: collected, reason: "agent_stuck" };
+    }
+
+    return { success: true, recommendations: collected, reason: "max_turns_exceeded" };
+  }
+
   logger.info("Starting agent recommendation loop", {
     type,
     modelName,
@@ -609,7 +637,6 @@ async function runAgentLoop(dependencies = {}) {
     type,
     query: userQuery,
     numResults: resolvedNumResults,
-    doNotRecommend,
   });
 
   logger.agent("SYSTEM_PROMPT", systemPrompt);
@@ -627,6 +654,8 @@ async function runAgentLoop(dependencies = {}) {
     fetchTraktWatchedAndRated,
     isItemWatchedOrRated,
     processPreferencesInParallel,
+    traktWatchedIdSet,
+    traktRatedIdSet,
     caches: {
       tmdbCache,
       traktCache,
@@ -643,7 +672,6 @@ async function runAgentLoop(dependencies = {}) {
     type,
     query: userQuery,
     numResults: resolvedNumResults,
-    doNotRecommend,
     // Keep common prompt-builder inputs available if callers already pass them.
     currentYear: dependencies.currentYear,
     discoveredGenres: dependencies.discoveredGenres,
@@ -827,10 +855,90 @@ async function runAgentLoop(dependencies = {}) {
           return result;
         }
 
+        if (collected.length > 0) {
+          logger.error("Agent refinement call failed after collecting partial results", {
+            error: error.message,
+            turn: turns,
+            collectedSoFar: collected.length,
+          });
+          logger.agent("LOOP_ERROR_PARTIAL", {
+            turn: turns,
+            error: error.message,
+            stack: error.stack,
+            collectedSoFar: collected.length,
+          });
+          loopTerminationReason = "api_error_partial";
+          break;
+        }
+
         throw error;
       }
 
       continue;
+    }
+
+    if (turn + 1 >= maxTurns) {
+      logger.agent("FINALIZATION_FORCED", {
+        turn,
+        reason: "last_turn_had_tool_calls",
+      });
+
+      const finalizationMessage =
+        "You have used all available tool turns. Based on the information you have gathered so far, return your final recommendations now as a JSON array. Do not call any more tools.";
+
+      logger.agent("REFINEMENT_SENT", finalizationMessage);
+
+      let finalizationResponse;
+
+      try {
+        finalizationResponse = await callGemini(chat, finalizationMessage, { turn: turns });
+      } catch (error) {
+        if (isFunctionCallingUnsupportedError(error)) {
+          logger.warn("Agent model does not support function calling", {
+            modelName,
+            error: error.message,
+          });
+          const result = { success: false, reason: "function_calling_unsupported" };
+          logSummary(result.success, result.reason);
+          return result;
+        }
+
+        if (collected.length > 0) {
+          logger.error("Agent finalization call failed after collecting partial results", {
+            error: error.message,
+            turn: turns,
+            collectedSoFar: collected.length,
+          });
+          logger.agent("LOOP_ERROR_PARTIAL", {
+            turn: turns,
+            error: error.message,
+            stack: error.stack,
+            collectedSoFar: collected.length,
+          });
+          loopTerminationReason = "api_error_partial";
+          break;
+        }
+
+        throw error;
+      }
+
+      const finalizationFunctionCalls = extractFunctionCalls(finalizationResponse);
+
+      if (finalizationFunctionCalls.length > 0) {
+        logger.warn("Agent finalization response still requested tools", {
+          turn: turns,
+          toolCount: finalizationFunctionCalls.length,
+        });
+        break;
+      }
+
+      const result = processFinalTextResponse(finalizationResponse, turns);
+      if (result.success) {
+        logSummary(result.success, result.reason, result.recommendations);
+      } else {
+        logSummary(result.success, result.reason);
+      }
+      return result;
     }
 
     toolCalls += functionCalls.length;
@@ -914,15 +1022,33 @@ async function runAgentLoop(dependencies = {}) {
         return result;
       }
 
+      if (collected.length > 0) {
+        logger.error("Agent tool response call failed after collecting partial results", {
+          error: error.message,
+          turn: turns,
+          collectedSoFar: collected.length,
+        });
+        logger.agent("LOOP_ERROR_PARTIAL", {
+          turn: turns,
+          error: error.message,
+          stack: error.stack,
+          collectedSoFar: collected.length,
+        });
+        loopTerminationReason = "api_error_partial";
+        break;
+      }
+
       throw error;
     }
   }
 
-  logger.warn("Agent loop exhausted max turns", { type, maxTurns });
+  if (loopTerminationReason === "max_turns_exceeded") {
+    logger.warn("Agent loop exhausted max turns", { type, maxTurns });
+  }
   const result = {
     success: true,
     recommendations: collected,
-    reason: "max_turns_exceeded",
+    reason: loopTerminationReason,
   };
   logSummary(result.success, result.reason, result.recommendations);
   return result;

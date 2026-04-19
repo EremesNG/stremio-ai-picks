@@ -60,30 +60,11 @@ function buildAgentSystemPrompt(ctx = {}) {
     "Tool-use protocol:",
     "1. ALWAYS call search_tmdb to resolve each proposed title into a tmdb_id before answering.",
     "2. Optionally call get_user_favorites when the signal is low or you need more preference context.",
-    "3. Never recommend any item whose tmdb_id or imdb_id appears in the do-not-recommend set.",
+    "3. Use the `check_if_watched` tool to verify whether items have been watched or rated before recommending them. Do not recommend items that the user has already watched or rated.",
     "4. Final answer MUST be a valid JSON array of objects shaped like { type, name, year, tmdb_id, imdb_id? }.",
     `5. Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`,
     "6. Do not include markdown, prose, code fences, or commentary.",
   ].join("\n");
-}
-
-function formatDoNotRecommendRow(item = {}) {
-  const parts = [
-    `type: ${JSON.stringify(item.type || "movie")}`,
-    `tmdb_id: ${JSON.stringify(item.tmdb_id)}`,
-  ];
-
-  if (item.imdb_id) {
-    parts.push(`imdb_id: ${JSON.stringify(item.imdb_id)}`);
-  }
-
-  parts.push(`title: ${JSON.stringify(item.title || item.name || "")}`);
-
-  if (item.year != null && item.year !== "") {
-    parts.push(`year: ${JSON.stringify(item.year)}`);
-  }
-
-  return `{ ${parts.join(", ")} }`;
 }
 
 function buildAgentInitialMessage(ctx = {}) {
@@ -91,7 +72,6 @@ function buildAgentInitialMessage(ctx = {}) {
   const type = getType(ctx);
   const numResults = getNumResults(ctx);
   const currentYear = ctx.currentYear || DEFAULT_CURRENT_YEAR;
-  const doNotRecommend = Array.isArray(ctx.doNotRecommend) ? ctx.doNotRecommend : [];
   const discoveredGenres = Array.isArray(ctx.discoveredGenres) ? ctx.discoveredGenres : [];
   const genreCriteria = ctx.genreCriteria || null;
 
@@ -114,10 +94,6 @@ function buildAgentInitialMessage(ctx = {}) {
     ? '[{"type":"movie","name":"The Matrix","year":1999,"tmdb_id":603,"imdb_id":"tt0133093"}]'
     : '[{"type":"series","name":"Breaking Bad","year":2008,"tmdb_id":1396,"imdb_id":"tt0903747"}]';
 
-  const doNotRecommendRows = doNotRecommend.length > 0
-    ? doNotRecommend.map((item) => `- ${formatDoNotRecommendRow(item)}`).join("\n")
-    : "- (none)";
-
   const queryBits = [
     `User query: ${query}`,
     `Requested type: ${type}`,
@@ -134,12 +110,9 @@ function buildAgentInitialMessage(ctx = {}) {
     "GUIDANCE:",
     ...guidance,
     "",
-    "DO-NOT-RECOMMEND IDS:",
-    doNotRecommendRows,
-    "",
     "OUTPUT CONTRACT:",
     `Return exactly ${numResults} items as a valid JSON array of { type, name, year, tmdb_id, imdb_id? } objects.`,
-    "Always exclude any item whose tmdb_id or imdb_id matches the do-not-recommend set.",
+    "Always exclude any item the user has already watched or rated.",
     "",
     "FEW-SHOT EXAMPLE:",
     examples,
