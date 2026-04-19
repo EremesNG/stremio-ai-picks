@@ -4,6 +4,7 @@ const { withRetry } = require("./apiRetry");
 const {
   buildAgentSystemPrompt,
   buildAgentInitialMessage,
+  buildProgressFeedback,
 } = require("./prompts");
 const { normalizeMediaKey } = require("./trakt");
 
@@ -243,17 +244,105 @@ function getRecentProposedIds(proposedIdSet, limit = 50) {
   return [...proposedIdSet].slice(-limit);
 }
 
+function normalizeProposedTitle(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function formatAcceptedItemsForMessage(items) {
+  return items
+    .map((item) => {
+      const name = item?.name || item?.title || "Unknown";
+      const details = [];
+
+      if (item?.year) {
+        details.push(item.year);
+      }
+
+      if (item?.tmdb_id != null) {
+        details.push(`tmdb:${item.tmdb_id}`);
+      }
+
+      return details.length > 0 ? `${name} (${details.join(", ")})` : name;
+    })
+    .join(", ");
+}
+
+function addProposedTitles(target, titles) {
+  if (!Array.isArray(target)) {
+    return;
+  }
+
+  titles.forEach((title) => {
+    const normalized = normalizeProposedTitle(title);
+    if (normalized) {
+      target.push(normalized);
+    }
+  });
+}
+
+function collectProposedTitlesFromFunctionCalls(functionCalls) {
+  const titles = [];
+
+  functionCalls.forEach((call) => {
+    const args = call?.args && typeof call.args === "object" ? call.args : {};
+
+    if (call?.name === "check_if_watched" && Array.isArray(args.items)) {
+      addProposedTitles(
+        titles,
+        args.items.map((item) => item?.title)
+      );
+      return;
+    }
+
+    if (call?.name === "batch_search_tmdb" && Array.isArray(args.queries)) {
+      addProposedTitles(
+        titles,
+        args.queries.map((query) => query?.query)
+      );
+      return;
+    }
+
+    if (call?.name === "search_tmdb") {
+      addProposedTitles(titles, [args.query]);
+    }
+  });
+
+  return titles;
+}
+
+function recordProposedTitlesFromRecommendations(recommendations, proposedTitles) {
+  if (!Array.isArray(recommendations)) {
+    return;
+  }
+
+  addProposedTitles(
+    proposedTitles,
+    recommendations.map((item) => item?.name || item?.title)
+  );
+}
+
 function buildRefinementMessage({
   neededCount,
   droppedWatched,
   droppedNoId,
   droppedDuplicates,
   recentProposedIds,
+  acceptedItems,
 }) {
   const watchedIds = normalizeDroppedItems(droppedWatched).map(formatDroppedIdentity);
+  const acceptedText =
+    Array.isArray(acceptedItems) && acceptedItems.length > 0
+      ? formatAcceptedItemsForMessage(acceptedItems)
+      : "(none)";
 
   return [
     `Need ${neededCount} more unwatched items.`,
+    `Already accepted (DO NOT re-propose): ${acceptedText}`,
     `Already watched this turn: ${watchedIds.length > 0 ? watchedIds.join(", ") : "(none)"}`,
     `No tmdb_id this turn: ${countDroppedItems(droppedNoId)}`,
     `Duplicate proposals this turn: ${countDroppedItems(droppedDuplicates)}`,
@@ -474,6 +563,7 @@ async function runAgentLoop(dependencies = {}) {
   let toolCalls = 0;
   let collected = [];
   let proposedIdSet = new Set();
+  let proposedTitles = [];
   let droppedWatchedTotal = 0;
   let droppedNoIdTotal = 0;
   let droppedDuplicatesTotal = 0;
@@ -546,6 +636,7 @@ async function runAgentLoop(dependencies = {}) {
     }
 
     const recommendations = normalizeRecommendationList(parsed);
+    recordProposedTitlesFromRecommendations(recommendations, proposedTitles);
 
     if (typeof filterCandidates !== "function") {
       return {
@@ -751,6 +842,7 @@ async function runAgentLoop(dependencies = {}) {
       }
 
       const recommendations = normalizeRecommendationList(parsed);
+      recordProposedTitlesFromRecommendations(recommendations, proposedTitles);
 
       if (typeof filterCandidates !== "function") {
         const legacyResult = { success: true, recommendations: recommendations.slice(0, resolvedNumResults) };
@@ -855,6 +947,11 @@ async function runAgentLoop(dependencies = {}) {
         droppedNoId: turnDroppedNoIdCount,
         droppedDuplicates: turnDroppedDuplicateCount,
         recentProposedIds: getRecentProposedIds(proposedIdSet, 50),
+        acceptedItems: collected.map((item) => ({
+          name: item.name || item.title,
+          year: item.year,
+          tmdb_id: item.tmdb_id,
+        })),
       });
 
       logger.agent("REFINEMENT_SENT", refinementMessage);
@@ -901,7 +998,15 @@ async function runAgentLoop(dependencies = {}) {
       });
 
       const finalizationMessage =
-        "You have used all available tool turns. Based on the information you have gathered so far, return your final recommendations now as a JSON array. Do not call any more tools.";
+        collected.length > 0
+          ? `You have used all available tool turns. Items already accepted: ${formatAcceptedItemsForMessage(
+              collected.map((item) => ({
+                name: item.name || item.title,
+                year: item.year,
+                tmdb_id: item.tmdb_id,
+              }))
+            )}. Based on the information you have gathered so far, return your final recommendations now as a JSON array. Include the already-accepted items plus any additional unwatched items you've identified. Do not call any more tools.`
+          : "You have used all available tool turns. Based on the information you have gathered so far, return your final recommendations now as a JSON array. Do not call any more tools.";
 
       logger.agent("REFINEMENT_SENT", finalizationMessage);
 
@@ -968,6 +1073,8 @@ async function runAgentLoop(dependencies = {}) {
       });
     });
 
+    addProposedTitles(proposedTitles, collectProposedTitlesFromFunctionCalls(functionCalls));
+
     if (typeof executeTools !== "function") {
       throw new Error("Agent tool executor is required when Gemini returns function calls");
     }
@@ -1021,8 +1128,25 @@ async function runAgentLoop(dependencies = {}) {
       },
     });
 
+    const progressMessage =
+      collected.length > 0 || proposedTitles.length > 0
+        ? buildProgressFeedback({
+            acceptedItems: collected.map((item) => ({
+              name: item.name || item.title,
+              year: item.year,
+              tmdb_id: item.tmdb_id,
+            })),
+            neededCount: Math.max(0, resolvedNumResults - collected.length),
+            alreadyProposedTitles: [...new Set(proposedTitles)],
+          })
+        : null;
+
+    const toolResponseMessage = progressMessage
+      ? [...normalizedToolParts, { text: progressMessage }]
+      : normalizedToolParts;
+
     try {
-      response = await callGemini(chat, normalizedToolParts, { turn: turns });
+      response = await callGemini(chat, toolResponseMessage, { turn: turns });
     } catch (error) {
       if (isFunctionCallingUnsupportedError(error)) {
         logger.warn("Agent model does not support function calling", {

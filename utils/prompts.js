@@ -55,19 +55,32 @@ function buildAgentSystemPrompt(ctx = {}) {
   const filterWatched = ctx.filterWatched !== false; // default true if missing
 
   const toolProtocol = [
-    "1. ALWAYS call search_tmdb to resolve each proposed title into a tmdb_id before answering.",
-    "2. Optionally call get_user_favorites when the signal is low or you need more preference context.",
+    "TURN EFFICIENCY PROTOCOL:",
+    "- You have a LIMITED number of turns. Maximize every turn by making MULTIPLE tool calls.",
+    "- NEVER call search_tmdb for a single title. ALWAYS use batch_search_tmdb to search multiple titles at once (up to 20).",
+    "- NEVER call check_if_watched for a single item. ALWAYS batch up to 10 items per call.",
+    "- Prefer proposing MORE candidates than needed (overshoot by 50%) to account for watched items being filtered out.",
+    "- Every title you propose MUST be unique. Never re-propose a title from a previous turn.",
+    "- When you receive progress feedback, it will list already-accepted items. Do NOT include those in your final answer — they are already counted.",
+    "- Optionally call get_user_favorites when the signal is low or you need more preference context.",
+    "OPTIMAL WORKFLOW:",
+    "- Turn 1: Think of 25-30 candidate titles → call batch_search_tmdb with all of them.",
+    "- Turn 2: Take the resolved results → call check_if_watched in batches of 10 (2-3 calls).",
+    "- Turn 3: Collect unwatched items. If you have enough (≥ requested count), return final JSON. If not enough, think of MORE new candidates and repeat from Turn 1.",
   ];
 
   if (filterWatched) {
-    toolProtocol.push("3. Use the `check_if_watched` tool to verify whether items have been watched or rated before recommending them. Do not recommend items that the user has already watched or rated.");
+    toolProtocol.push("WATCHED-FILTER RULES:");
+    toolProtocol.push("- Use the `check_if_watched` tool to verify whether items have been watched or rated before recommending them. Do not recommend items that the user has already watched or rated.");
   } else {
-    toolProtocol.push("3. The user has opted out of watched-item filtering. Recommend freely without checking watch history.");
+    toolProtocol.push("WATCHED-FILTER RULES:");
+    toolProtocol.push("- The user has opted out of watched-item filtering. Recommend freely without checking watch history.");
   }
 
-  toolProtocol.push("4. Final answer MUST be a valid JSON array of objects shaped like { type, name, year, tmdb_id, imdb_id? }.");
-  toolProtocol.push(`5. Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`);
-  toolProtocol.push("6. Do not include markdown, prose, code fences, or commentary.");
+  toolProtocol.push("OUTPUT RULES:");
+  toolProtocol.push("- Final answer MUST be a valid JSON array of objects shaped like { type, name, year, tmdb_id, imdb_id? }.");
+  toolProtocol.push(`- Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`);
+  toolProtocol.push("- Do not include markdown, prose, code fences, or commentary.");
 
   return [
     `You are a ${type} recommendation agent.`,
@@ -138,8 +151,31 @@ function buildAgentInitialMessage(ctx = {}) {
   ].join("\n");
 }
 
+function buildProgressFeedback({ acceptedItems = [], neededCount = 0, alreadyProposedTitles = [] } = {}) {
+  const acceptedText = acceptedItems.length > 0
+    ? acceptedItems.map((item) => {
+        const name = item?.name || "Unknown";
+        const year = item?.year ? ` (${item.year})` : "";
+        return `${name}${year}`;
+      }).join(", ")
+    : "None";
+
+  const proposedText = alreadyProposedTitles.length > 0
+    ? alreadyProposedTitles.join(", ")
+    : "None";
+
+  return [
+    "PROGRESS UPDATE:",
+    `Accepted so far (DO NOT re-propose these): ${acceptedText}`,
+    `Still needed: ${neededCount} more unwatched items.`,
+    `Already proposed (avoid these): ${proposedText}`,
+    "Think of NEW titles not listed above. Use batch_search_tmdb to search them all at once.",
+  ].join("\n");
+}
+
 module.exports = {
   buildLinearPrompt,
   buildAgentSystemPrompt,
   buildAgentInitialMessage,
+  buildProgressFeedback,
 };

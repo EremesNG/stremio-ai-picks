@@ -24,6 +24,37 @@ const toolDeclarations = [
     },
   },
   {
+    name: "batch_search_tmdb",
+    description:
+      "Search TMDB for multiple movies or series at once. Accepts an array of search queries and returns results for each. Use this instead of calling search_tmdb multiple times.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        queries: {
+          type: "ARRAY",
+          maxItems: 20,
+          items: {
+            type: "OBJECT",
+            properties: {
+              type: {
+                type: "STRING",
+                enum: ["movie", "series"],
+              },
+              query: {
+                type: "STRING",
+              },
+              year: {
+                type: "INTEGER",
+              },
+            },
+            required: ["type", "query"],
+          },
+        },
+      },
+      required: ["queries"],
+    },
+  },
+  {
     name: "get_user_favorites",
     description:
       "Fetch the user's Trakt favorites (curated list of strongest preferences). Returns normalized items with tmdb/imdb/trakt ids, title, year, type, and rank.",
@@ -41,14 +72,14 @@ const toolDeclarations = [
   {
     name: "check_if_watched",
     description:
-      "Check whether items have already been watched or rated by the user. Returns per-item watched/rated status for batches of up to 10 items.",
+      "Check whether items have already been watched or rated by the user. Returns per-item watched/rated status for batches of up to 20 items.",
     parameters: {
       type: "OBJECT",
       properties: {
         items: {
-          type: "ARRAY",
-          maxItems: 10,
-          items: {
+           type: "ARRAY",
+           maxItems: 20,
+           items: {
             type: "OBJECT",
             properties: {
               type: {
@@ -331,6 +362,55 @@ async function handleSearchTmdb(args, deps) {
   };
 }
 
+async function handleBatchSearchTmdb(args, deps) {
+  const queries = Array.isArray(args.queries) ? args.queries.slice(0, 20) : [];
+
+  const settled = await Promise.allSettled(
+    queries.map(async (queryArgs) => {
+      const type = normalizeMediaType(queryArgs?.type);
+      const query = normalizeString(queryArgs?.query);
+      const year = normalizeOptionalYear(queryArgs?.year);
+
+      const results = await callSearchTMDB(deps.searchTMDB, {
+        query,
+        type,
+        year,
+      });
+
+      const matches = dedupeItems(
+        collectArrayLike(results)
+          .map((item) => normalizeSearchResult(item, type))
+          .filter(Boolean)
+      ).map(({ type: _type, ...item }) => item);
+
+      return {
+        query,
+        type,
+        matches,
+      };
+    })
+  );
+
+  return {
+    results: settled.map((entry, index) => {
+      const source = queries[index] || {};
+      const query = normalizeString(source.query);
+      const type = normalizeMediaType(source.type);
+
+      if (entry.status === "fulfilled") {
+        return entry.value;
+      }
+
+      return {
+        query,
+        type,
+        matches: [],
+        error: entry.reason?.message || "tool execution failed",
+      };
+    }),
+  };
+}
+
 async function handleGetUserFavorites(args, deps) {
   const fetcher = deps.traktFavoritesFetcher;
   if (typeof fetcher !== "function") {
@@ -355,7 +435,7 @@ async function handleGetUserFavorites(args, deps) {
 }
 
 async function handleCheckIfWatched(args, deps) {
-  const items = Array.isArray(args.items) ? args.items.slice(0, 10) : [];
+   const items = Array.isArray(args.items) ? args.items.slice(0, 20) : [];
   const watchedIdSet = deps.traktWatchedIdSet instanceof Set ? deps.traktWatchedIdSet : new Set();
   const ratedIdSet = deps.traktRatedIdSet instanceof Set ? deps.traktRatedIdSet : new Set();
 
@@ -377,6 +457,7 @@ async function handleCheckIfWatched(args, deps) {
 
 const handlers = {
   search_tmdb: handleSearchTmdb,
+  batch_search_tmdb: handleBatchSearchTmdb,
   get_user_favorites: handleGetUserFavorites,
   check_if_watched: handleCheckIfWatched,
 };
