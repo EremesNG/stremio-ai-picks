@@ -4,56 +4,70 @@
 
 # Stremio AI Picks
 
-An intelligent search addon for Stremio powered by Google's Gemini AI. Get personalized movie and TV series recommendations based on natural language queries.
+AI-powered movie & TV show recommendations for Stremio.
 
-<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio-ai-picks.eremesng.com%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version 2.0.0" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license" />
+  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio-ai-picks.vercel.app%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
+</p>
+
+| Field | Value |
+|---|---|
+| Addon ID | `eremesng.aipicks` |
+| Version | `2.0.0` |
+| Author | EremesNG (`eremesng@gmail.com`) |
+| Live URL | https://stremio-ai-picks.vercel.app/ |
+| Configure URL | https://stremio-ai-picks.vercel.app/configure |
+| GitHub | https://github.com/EremesNG/stremio-ai-picks |
+| Stack | Node.js, Express, `stremio-addon-sdk`, Google Gemini AI, TMDB, Trakt.tv |
+| Database | Turso (LibSQL) for Trakt OAuth tokens |
+| Deployment | Vercel (primary), Docker/PM2 (self-hosting alternative) |
 
 ## Features
 
-- Trakt integration to help Gemini suggest personalized recommendations. Note: Only searches starting with "Recommend" will provide personalized recommendations using your watch history from Trakt.
-- Select any of the Google AI models in the addon configuration
-- You can set the number of recommendations AI should return for a query (30 Max)
-- TMDB integration ensures you have a content rich catalog for movies and series
-- RPDB integration gives you access to awesome posters with inbuilt ratings
-- Optional Movie and Series recommendation catalogs in homescreen (Multiple supported)
-- Optional Adult content recommendation
-- AI based Similar items recommendation in streams view
-- Error Posters in case of errors for better user experience
+- 🤖 AI-powered recommendations using Google Gemini with multiple model options
+- 🎬 Deep TMDB integration for metadata, posters, and discovery
+- 📊 Trakt.tv integration for watched history, ratings, and favorites to filter seen content
+- 🏠 Customizable homepage catalogs with natural language queries
+- 🔍 Search-based recommendations powered by the AI agent loop
+- ⚙️ Configurable model selection, max turns (4-12), and watched filter toggle
+- ⚡ Batched TMDB searches, batched watched checks, and progress feedback for faster responses
+- 🖼️ RPDB poster overlays (optional)
+- 🎨 Fanart.tv integration (optional)
+- 🔒 Encrypted configuration — user settings are AES-256-CBC encrypted in the URL
 
 ## Installation
 
-1. Visit [Addon configuration](https://stremio-ai-picks.eremesng.com/configure)
-2. Enter your API keys
-3. Provide optional parameters
-4. Install
-5. Buy me a coffee :)
-   <br/><br/>
-   <a href="https://buymeacoffee.com/eremesng">
-   <img src="public/bmc.png" alt="Buy Me A Coffee" height="40" />
-   </a>
+1. Visit the [configuration page](https://stremio-ai-picks.vercel.app/configure)
+2. Enter your Gemini API key and TMDB API key
+3. Optionally connect Trakt.tv for personalized filtering
+4. Configure your preferences (model, max turns, homepage queries)
+5. Click install to add the addon to Stremio
 
 ## Customizing Your Homepage
 
-One of the most powerful features of this addon is the ability to create your own recommendation rows directly on the Stremio homepage. In the "Custom Homepage Catalogs" field within the addon's advanced settings, you can define multiple, comma-separated catalogs.
+One of the most powerful features of this addon is custom homepage catalogs. In the **Custom Homepage Catalogs** field, define multiple entries using `Title:Query` syntax and separate each entry with `|||`.
 
-Use a Title:Query format for each entry. This colon-separated, key-value pair approach provides a more structured and intuitive way to define your homepage. The Title serves as the distinct name for your catalog, while the Query is the natural language request for recommendations. This method prevents ambiguity and makes your configuration easier to read and manage.
+This makes the title the catalog name and the query the natural-language prompt used to generate recommendations. Commas inside queries are safe because the separator is `|||`, not a comma.
 
 ### Tips for Effective Homepage Catalogs
 
--   **Use a Comma-Separated List**: To create multiple catalogs in your homepage, separate each Title:Query pair with a comma.
-    -   *Example*: `Mystery:recommend mystery thrillers,Sports:recommend sports movies`
--   **Get Personalized Recommendations**: Start your query with the word recommend to leverage your Trakt.tv watch history and ratings for highly personalized suggestions.
-    -   *Example*: `For You:recommend feel-good movies` will find movies similar to what you've watched and liked on Trakt.
--   **Find the Latest Content**: Use keywords like new, latest, or recent to discover the most up-to-date movies and shows.
-    -   *Example*: `New Series:new popular series` or `Recent Anime:latest anime movies`
--   **Be Specific**: The addon is intelligent. If you specify "movies" in your query, it will only create a movie catalog. Similarly, asking for "series" will result in only a series catalog. For ambiguous queries, it will create catalogs for both movies and series.
-    -   *Example*: `Pixar Films:Pixar movies` will create a single "Pixar Films - Movie" catalog.
+- **Use a Title:Query pair** for each catalog.
+- **Separate multiple catalogs with `|||`**.
+- **Start with `recommend`** when you want personalization from Trakt history and ratings.
+  - Example: `For You:recommend feel-good movies`
+- **Use words like `new`, `latest`, or `recent`** to discover newer content.
+  - Example: `New Series:new popular series`
+- **Be specific**: mentioning movies or series narrows the catalog type automatically.
+  - Example: `Pixar Films:Pixar movies`
 
 ### Example Homepage Configuration
-An example setting in the configuration page could be:
-`Thrillers:recommend mind-bending thrillers,Popular Series:new popular series,A24 Films:best of A24,Anime Classics:90s anime`
 
-This configuration would generate the following catalogs on your Stremio homepage:
+`Thrillers:recommend mind-bending thrillers|||Popular Series:new popular series|||A24 Films:best of A24|||Anime Classics:90s anime`
+
+This would generate catalogs such as:
+
 - Thrillers - Movie
 - Thrillers - Series
 - Popular Series - Series
@@ -61,20 +75,20 @@ This configuration would generate the following catalogs on your Stremio homepag
 - Anime Classics - Movie
 - Anime Classics - Series
 
-### Example Homepage Configuration
+### Another Example
 
-An example setting in the configuration page could be:
-`recommend mind-bending thrillers, new popular series, best of A24, 90s anime`
+`recommend mind-bending thrillers|||new popular series|||best of A24|||90s anime`
 
-This would generate the following catalogs on your Stremio homepage:
--   `Recommend mind-bending thrillers - Movie`
--   `Recommend mind-bending thrillers - Series`
--   `New popular series - Series`
--   `Best of A24 - Movie`
--   `90s anime - Movie`
--   `90s anime - Series`
+This would generate catalogs such as:
 
-## Query ideas
+- `Recommend mind-bending thrillers - Movie`
+- `Recommend mind-bending thrillers - Series`
+- `New popular series - Series`
+- `Best of A24 - Movie`
+- `90s anime - Movie`
+- `90s anime - Series`
+
+## Query Ideas
 
 Here are some examples showing how versatile this addon is.
 
@@ -452,204 +466,101 @@ Here are some examples showing how versatile this addon is.
 - "Movies that killed their franchises"
 - "Forgotten classics deserving rediscovery"
 
-## Self Hosting
+## Deployment
 
-### Environment Variables
+### 7.1 Vercel (Recommended)
 
-A ready-to-use template lives at [`.env.example`](./.env.example) in the repository root. Copy it to `.env` and fill in the values:
+This repository is deployed primarily on Vercel. The `vercel` branch is configured for Vercel + Turso deployment. The `main` branch retains the original self-hosted setup with local SQLite and file-based cache persistence.
 
-```bash
-cp .env.example .env
-```
+**Deploy options:**
 
-> **Note on end-user API keys.** Google Gemini and TMDB keys are **not** server-side environment variables. Each addon user enters them on the `/configure` page; the values are encrypted with `ENCRYPTION_KEY` (AES-256-CBC) and travel as an encrypted segment in the manifest URL. See `utils/crypto.js` and `public/configure.html`.
+- One-click deploy from the GitHub repository
+- Or fork the repo and import it into Vercel manually
 
-#### Required
+**Environment variables**
 
-| Variable | Purpose |
-| --- | --- |
-| `ENCRYPTION_KEY` | AES-256-CBC key used to encrypt user configuration. **Must be at least 32 characters** — the server exits on startup otherwise. Generate one with `openssl rand -hex 32`. |
-| `HOST` | Public domain of the addon, without protocol (e.g. `my-addon.example.com`). Used to build manifest URLs and the Trakt OAuth callback. |
-| `TRAKT_CLIENT_ID` | Trakt.tv OAuth application client ID. Create one at <https://trakt.tv/oauth/applications>. |
-| `TRAKT_CLIENT_SECRET` | Trakt.tv OAuth application client secret. The OAuth redirect URI must match `https://${HOST}/callback`. |
+| Variable | Required | Description |
+|---|---|---|
+| `ENCRYPTION_KEY` | Yes | AES-256-CBC key, at least 32 chars. The server exits without it. |
+| `HOST` | Yes | Your Vercel domain without protocol, for example `stremio-ai-picks.vercel.app`. |
+| `TRAKT_CLIENT_ID` | Yes | Trakt.tv OAuth app client ID. |
+| `TRAKT_CLIENT_SECRET` | Yes | Trakt.tv OAuth app client secret. |
+| `TURSO_URI` | Yes | Turso database URL (`libsql://...`). |
+| `TURSO_TOKEN` | Yes | Turso authentication token. |
+| `RPDB_API_KEY` | No | Rating Poster DB key for poster overlays. |
+| `FANART_API_KEY` | No | Fanart.tv key for additional artwork. |
+| `ADMIN_TOKEN` | No | Protects admin cache endpoints. Defaults to `change-me-in-env-file`. |
+| `GITHUB_TOKEN` | No | Used for in-app issue submission. |
+| `RECAPTCHA_SECRET_KEY` | No | reCAPTCHA validation for issue submissions. |
 
-#### Optional
+**Notes**
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `RPDB_API_KEY` | — | Rating Poster DB key. Adds rating overlays on posters. Get one at <https://ratingposterdb.com/>. |
-| `FANART_API_KEY` | — | Fanart.tv key. Enables additional artwork (logos, clearart, etc.). Get one at <https://fanart.tv/get-an-api-key/>. |
-| `ADMIN_TOKEN` | `change-me-in-env-file` | Protects the `/cache/*` administration endpoints. **Change this in any public deployment** — the default is intentionally insecure. |
-| `ENABLE_LOGGING` | `false` | Enables verbose logging. Must be the literal string `"true"`; any other value (`1`, `yes`, `on`) is treated as `false`. |
-| `GITHUB_TOKEN` | — | GitHub Personal Access Token with `repo` or `public_repo` scope. Required only if you enable the in-app issue reporting form. |
-| `RECAPTCHA_SECRET_KEY` | — | Google reCAPTCHA v2/v3 secret. Validates the issue reporting form to prevent spam. Get one at <https://www.google.com/recaptcha/admin>. |
+- Set the Trakt OAuth redirect URI to `https://{HOST}/oauth/callback` in your Trakt app settings.
+- In-memory caches are ephemeral on Vercel, so first requests after a cold start may be slower, but functionality still works.
 
-### Admin Endpoints
+### 7.2 Self Hosting (Docker/PM2)
 
-The addon provides several administrative endpoints for cache management. All endpoints require an admin token which should be set in the `.env` file as `ADMIN_TOKEN`.
+For self-hosted deployments, use the `main` branch, which includes local SQLite (`better-sqlite3`) plus file-based cache persistence.
 
-### Cache Management
+**Environment variables**
 
-All endpoints are GET requests and require the `adminToken` as a query parameter. You can run any of these endpoints directly in your browser.
+| Variable | Required | Description |
+|---|---|---|
+| `ENCRYPTION_KEY` | Yes | AES-256-CBC key, at least 32 chars. |
+| `HOST` | Yes | Your domain or IP address, without protocol. |
+| `TRAKT_CLIENT_ID` | Yes | Trakt.tv OAuth app client ID. |
+| `TRAKT_CLIENT_SECRET` | Yes | Trakt.tv OAuth app client secret. |
+| `RPDB_API_KEY` | No | Rating Poster DB key for poster overlays. |
+| `FANART_API_KEY` | No | Fanart.tv key for additional artwork. |
+| `ADMIN_TOKEN` | No | Protects admin cache endpoints. Defaults to `change-me-in-env-file`. |
+| `GITHUB_TOKEN` | No | Used for in-app issue submission. |
+| `RECAPTCHA_SECRET_KEY` | No | reCAPTCHA validation for issue submissions. |
+| `ENABLE_LOGGING` | No | Set to the literal string `true` for verbose logging. |
 
-#### Cache Statistics
+**Run options**
 
-```bash
-GET https://stremio-ai-picks.eremesng.com/cache/stats?adminToken=your-admin-token
-```
+- Docker: `Dockerfile` uses `node:23`, corepack + pnpm, exposes port `7000`, and runs `node server.js`.
+- PM2: `ecosystem.config.js` runs one forked instance on port `7000`.
 
-#### AI Cache Management
+**Notes**
 
-```bash
-# Clear all AI cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/ai?adminToken=your-admin-token
+- Set the Trakt OAuth redirect URI to `https://{HOST}/oauth/callback`.
+- Self-hosting keeps cache persistence on disk, unlike Vercel.
 
-# Remove specific AI cache entries by keywords
-GET https://stremio-ai-picks.eremesng.com/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=ocean%20thriller
+## Admin Endpoints
 
-# Purge all empty AI recommendation entries from the cache
-GET https://stremio-ai-picks.eremesng.com/cache/purge/ai-empty?adminToken=your-admin-token
-```
+All admin endpoints use relative paths and require `adminToken` as a query parameter. These endpoints are available on both Vercel and self-hosted deployments. On Vercel, caches are ephemeral and scoped to individual function instances — clearing a cache only affects the current warm instance. On self-hosted deployments, caches persist in memory for the lifetime of the server process.
 
-#### TMDB Cache Management
-
-```bash
-# Clear TMDB cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb?adminToken=your-admin-token
-
-# Clear TMDB details cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb-details?adminToken=your-admin-token
-
-# Clear TMDB discover cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/tmdb-discover?adminToken=your-admin-token
-
-# List all TMDB discover cache keys
-GET https://stremio-ai-picks.eremesng.com/cache/list/tmdb-discover?adminToken=your-admin-token
-
-# Remove a specific TMDB discover cache item
-GET https://stremio-ai-picks.eremesng.com/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
-```
-
-#### Other Cache Management
-
-```bash
-# Clear RPDB cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/rpdb?adminToken=your-admin-token
-
-# Clear Trakt cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/trakt?adminToken=your-admin-token
-
-# Clear Trakt raw data cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/trakt-raw?adminToken=your-admin-token
-
-# Clear query analysis cache
-GET https://stremio-ai-picks.eremesng.com/cache/clear/query-analysis?adminToken=your-admin-token
-
-# Clear all caches
-GET https://stremio-ai-picks.eremesng.com/cache/clear/all?adminToken=your-admin-token
-
-# Save all caches to files
-GET https://stremio-ai-picks.eremesng.com/cache/save?adminToken=your-admin-token
-```
+| Purpose | Endpoint |
+|---|---|
+| Cache stats | `GET /cache/stats?adminToken=your-token` |
+| Clear AI cache | `GET /cache/clear/ai?adminToken=your-token` |
+| Clear AI cache by keywords | `GET /cache/clear/ai/keywords?adminToken=your-token&keywords=ocean%20thriller` |
+| Purge empty AI entries | `GET /cache/purge/ai-empty?adminToken=your-token` |
+| Clear TMDB cache | `GET /cache/clear/tmdb?adminToken=your-token` |
+| Clear TMDB details cache | `GET /cache/clear/tmdb-details?adminToken=your-token` |
+| Clear TMDB discover cache | `GET /cache/clear/tmdb-discover?adminToken=your-token` |
+| List TMDB discover keys | `GET /cache/list/tmdb-discover?adminToken=your-token` |
+| Remove one TMDB discover item | `GET /cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-token` |
+| Clear RPDB cache | `GET /cache/clear/rpdb?adminToken=your-token` |
+| Clear Trakt cache | `GET /cache/clear/trakt?adminToken=your-token` |
+| Clear Trakt raw cache | `GET /cache/clear/trakt-raw?adminToken=your-token` |
+| Clear query analysis cache | `GET /cache/clear/query-analysis?adminToken=your-token` |
+| Clear all caches | `GET /cache/clear/all?adminToken=your-token` |
 
 ### Example Usage
 
-You can use these endpoints directly in your browser by visiting:
-
-```
-https://stremio-ai-picks.eremesng.com/cache/clear/ai?adminToken=your-admin-token
-https://stremio-ai-picks.eremesng.com/cache/clear/ai/keywords?adminToken=your-admin-token&keywords=your search terms
-https://stremio-ai-picks.eremesng.com/cache/purge/ai-empty?adminToken=your-admin-token
-https://stremio-ai-picks.eremesng.com/cache/list/tmdb-discover?adminToken=your-admin-token
-https://stremio-ai-picks.eremesng.com/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-admin-token
-https://stremio-ai-picks.eremesng.com/cache/clear/all?adminToken=your-admin-token
+```text
+/cache/clear/ai?adminToken=your-token
+/cache/clear/ai/keywords?adminToken=your-token&keywords=your search terms
+/cache/purge/ai-empty?adminToken=your-token
+/cache/list/tmdb-discover?adminToken=your-token
+/cache/remove/tmdb-discover?key=discover_series_80_2023-09-01_en-US&adminToken=your-token
+/cache/clear/all?adminToken=your-token
 ```
 
-### Response Examples
+## Contributing / License
 
-**Keywords-based cache removal response:**
-
-```json
-{
-  "removed": 2,
-  "entries": [
-    {
-      "key": "ocean thriller_movie_no_trakt",
-      "timestamp": "2024-03-20T12:34:56.789Z",
-      "query": "ocean thriller"
-    }
-  ]
-}
-```
-
-**AI empty cache purge response:**
-```json
-{
-  "message": "Purge of empty AI cache entries completed.",
-  "scanned": 150,
-  "purged": 12,
-  "remaining": 138
-}
-```
-
-**Keywords-based cache removal response:**
-```json
-{
-  "removed": 2,
-  "entries": [
-    {
-      "key": "ocean thriller_movie_no_trakt",
-      "timestamp": "2024-03-20T12:34:56.789Z",
-      "query": "ocean thriller"
-    }
-  ]
-}
-```
-
-**TMDB discover cache list response:**
-
-```json
-{
-  "success": true,
-  "count": 3,
-  "keys": [
-    "discover_series_80_2023-09-01_en-US",
-    "discover_movie_28_2024-01-01_en-US",
-    "discover_series_18_2023-03-01_en-US"
-  ]
-}
-```
-
-**TMDB discover cache item removal response:**
-
-```json
-{
-  "success": true,
-  "message": "Cache item removed successfully",
-  "key": "discover_series_80_2023-09-01_en-US"
-}
-```
-
-**General cache clearing response:**
-
-```json
-{
-  "cleared": true,
-  "previousSize": 42
-}
-```
-
-**Clear all caches response:**
-
-```json
-{
-  "tmdb": { "cleared": true, "previousSize": 15 },
-  "tmdbDetails": { "cleared": true, "previousSize": 10 },
-  "tmdbDiscover": { "cleared": true, "previousSize": 8 },
-  "ai": { "cleared": true, "previousSize": 42 },
-  "rpdb": { "cleared": true, "previousSize": 8 },
-  "trakt": { "cleared": true, "previousSize": 12 },
-  "traktRaw": { "cleared": true, "previousSize": 5 },
-  "queryAnalysis": { "cleared": true, "previousSize": 20 }
-}
-```
+- GitHub: https://github.com/EremesNG/stremio-ai-picks
+- Issues and pull requests are welcome.
+- Licensed under the MIT License.
