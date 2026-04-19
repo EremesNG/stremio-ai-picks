@@ -559,7 +559,7 @@ async function startServer() {
                     if (!homepageQueries || homepageQueries.trim() === '') {
                         homepageQueries = "AI Recommendations:recommend a hidden gem movie, AI Recommendations:recommend a binge-worthy series";
                     }
-                    const catalogEntries = homepageQueries.split(',').map(q => q.trim()).filter(Boolean);
+                    const catalogEntries = homepageQueries.split('|||').map(q => q.trim()).filter(Boolean);
                     const homepageCatalogs = [];
 
                     catalogEntries.forEach((entry, index) => {

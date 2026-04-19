@@ -419,7 +419,8 @@ async function runAgentLoop(dependencies = {}) {
     type = "movie",
     geminiApiKey,
     modelName = "gemini-flash-lite-latest",
-    maxTurns = DEFAULT_MAX_TURNS,
+    maxTurns: requestedMaxTurns = DEFAULT_MAX_TURNS,
+    filterWatched: requestedFilterWatched = true,
     numResults,
     traktWatchedIdSet,
     traktRatedIdSet,
@@ -440,6 +441,12 @@ async function runAgentLoop(dependencies = {}) {
     traktAccessToken,
   } = dependencies;
 
+  const filterWatched = requestedFilterWatched !== false;
+  const parsedMaxTurns = parseStrictInteger(requestedMaxTurns);
+  const maxTurns = Math.min(
+    12,
+    Math.max(4, parsedMaxTurns ?? DEFAULT_MAX_TURNS)
+  );
   const resolvedNumResults = normalizeNumResults(numResults);
 
   logger.agent("LOOP_START", {
@@ -459,6 +466,7 @@ async function runAgentLoop(dependencies = {}) {
           ? traktRatedIdSet.length
           : traktRatedIdSet?.length,
     maxTurns,
+    filterWatched,
   });
 
   const startTime = Date.now();
@@ -637,15 +645,20 @@ async function runAgentLoop(dependencies = {}) {
     type,
     query: userQuery,
     numResults: resolvedNumResults,
+    filterWatched,
   });
 
   logger.agent("SYSTEM_PROMPT", systemPrompt);
+
+  const geminiToolDeclarations = filterWatched
+    ? toolDeclarations
+    : toolDeclarations.filter((tool) => tool?.name !== "check_if_watched");
 
   const chat = ai.chats.create({
     model: modelName,
     config: {
       systemInstruction: systemPrompt,
-      tools: [{ functionDeclarations: toolDeclarations }],
+      tools: [{ functionDeclarations: geminiToolDeclarations }],
     },
   });
 
@@ -654,8 +667,6 @@ async function runAgentLoop(dependencies = {}) {
     fetchTraktWatchedAndRated,
     isItemWatchedOrRated,
     processPreferencesInParallel,
-    traktWatchedIdSet,
-    traktRatedIdSet,
     caches: {
       tmdbCache,
       traktCache,
@@ -666,6 +677,12 @@ async function runAgentLoop(dependencies = {}) {
     traktAuth,
     traktUsername,
     traktAccessToken,
+    ...(filterWatched
+      ? {
+          traktWatchedIdSet,
+          traktRatedIdSet,
+        }
+      : {}),
   };
 
   const initialMessage = buildAgentInitialMessage({

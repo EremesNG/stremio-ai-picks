@@ -52,18 +52,29 @@ function buildLinearPrompt(ctx = {}) {
 function buildAgentSystemPrompt(ctx = {}) {
   const type = getType(ctx);
   const numResults = getNumResults(ctx);
+  const filterWatched = ctx.filterWatched !== false; // default true if missing
+
+  const toolProtocol = [
+    "1. ALWAYS call search_tmdb to resolve each proposed title into a tmdb_id before answering.",
+    "2. Optionally call get_user_favorites when the signal is low or you need more preference context.",
+  ];
+
+  if (filterWatched) {
+    toolProtocol.push("3. Use the `check_if_watched` tool to verify whether items have been watched or rated before recommending them. Do not recommend items that the user has already watched or rated.");
+  } else {
+    toolProtocol.push("3. The user has opted out of watched-item filtering. Recommend freely without checking watch history.");
+  }
+
+  toolProtocol.push("4. Final answer MUST be a valid JSON array of objects shaped like { type, name, year, tmdb_id, imdb_id? }.");
+  toolProtocol.push(`5. Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`);
+  toolProtocol.push("6. Do not include markdown, prose, code fences, or commentary.");
 
   return [
     `You are a ${type} recommendation agent.`,
     `Use the available tools to produce exactly ${numResults} recommendations when possible.`,
     "",
     "Tool-use protocol:",
-    "1. ALWAYS call search_tmdb to resolve each proposed title into a tmdb_id before answering.",
-    "2. Optionally call get_user_favorites when the signal is low or you need more preference context.",
-    "3. Use the `check_if_watched` tool to verify whether items have been watched or rated before recommending them. Do not recommend items that the user has already watched or rated.",
-    "4. Final answer MUST be a valid JSON array of objects shaped like { type, name, year, tmdb_id, imdb_id? }.",
-    `5. Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`,
-    "6. Do not include markdown, prose, code fences, or commentary.",
+    ...toolProtocol,
   ].join("\n");
 }
 
@@ -74,6 +85,7 @@ function buildAgentInitialMessage(ctx = {}) {
   const currentYear = ctx.currentYear || DEFAULT_CURRENT_YEAR;
   const discoveredGenres = Array.isArray(ctx.discoveredGenres) ? ctx.discoveredGenres : [];
   const genreCriteria = ctx.genreCriteria || null;
+  const filterWatched = ctx.filterWatched !== false; // default true if missing
 
   const guidance = [
     "- Focus on the specific requirements from the query (genres, time period, mood).",
@@ -103,6 +115,14 @@ function buildAgentInitialMessage(ctx = {}) {
     genreCriteria?.mood?.length > 0 ? `Mood/Style: ${genreCriteria.mood.join(", ")}` : "",
   ].filter(Boolean);
 
+  const outputContract = [
+    `Return exactly ${numResults} items as a valid JSON array of { type, name, year, tmdb_id, imdb_id? } objects.`,
+  ];
+
+  if (filterWatched) {
+    outputContract.push("Always exclude any item the user has already watched or rated.");
+  }
+
   return [
     "USER REQUEST:",
     ...queryBits,
@@ -111,8 +131,7 @@ function buildAgentInitialMessage(ctx = {}) {
     ...guidance,
     "",
     "OUTPUT CONTRACT:",
-    `Return exactly ${numResults} items as a valid JSON array of { type, name, year, tmdb_id, imdb_id? } objects.`,
-    "Always exclude any item the user has already watched or rated.",
+    ...outputContract,
     "",
     "FEW-SHOT EXAMPLE:",
     examples,

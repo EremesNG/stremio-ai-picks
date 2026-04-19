@@ -3168,11 +3168,12 @@ const catalogHandler = async function (args, req) {
             homepageQueries = "AI Recommendations:recommend a hidden gem movie, AI Recommendations:recommend a binge-worthy series";
         }
 
+        const catalogEntries = homepageQueries.split("|||").map(q => q.trim()).filter(Boolean);
+
         const idParts = id.split(".");
         
         if (idParts.length === 4 && homepageQueries) {
           const queryIndex = parseInt(idParts[2], 10);
-          const catalogEntries = homepageQueries.split(",").map(q => q.trim());
           if (!isNaN(queryIndex) && catalogEntries[queryIndex]) {
             const entry = catalogEntries[queryIndex];
             const parts = entry.split(/:(.*)/s);
@@ -3212,6 +3213,12 @@ const catalogHandler = async function (args, req) {
     const traktUsername = configData.traktUsername || configData.TraktUsername || "";
     const traktAccessToken = configData.TraktAccessToken || "";
     const traktClientId = DEFAULT_TRAKT_CLIENT_ID;
+    const filterWatched =
+      configData.FilterWatched !== undefined ? configData.FilterWatched !== false : true;
+    const parsedMaxTurns = Number.parseInt(configData.MaxTurns, 10);
+    const maxTurns = Number.isFinite(parsedMaxTurns)
+      ? Math.min(12, Math.max(4, parsedMaxTurns))
+      : 6;
 
     if (!geminiKey || geminiKey.length < 10) {
       logger.error("Invalid or missing Gemini API key");
@@ -3722,10 +3729,25 @@ const catalogHandler = async function (args, req) {
            });
          }
 
-         const filterCandidates = createFilterCandidates({
-          traktWatchedIdSet,
-          traktRatedIdSet,
-        });
+          const baseFilterCandidates = createFilterCandidates({
+           traktWatchedIdSet,
+           traktRatedIdSet,
+         });
+          const filterCandidates = filterWatched
+            ? baseFilterCandidates
+            : (rawItems = []) => {
+                const filtered = baseFilterCandidates(rawItems);
+                return {
+                  ...filtered,
+                  unwatched: [
+                    ...(Array.isArray(filtered.unwatched) ? filtered.unwatched : []),
+                    ...(Array.isArray(filtered.droppedWatched)
+                      ? filtered.droppedWatched
+                      : []),
+                  ],
+                  droppedWatched: [],
+                };
+              };
 
       logger.info("agent recommendation path starting", {
         query: searchQuery,
@@ -3748,6 +3770,8 @@ const catalogHandler = async function (args, req) {
           const agentResult = await runAgentLoop({
             ...agentDependencyBundle,
             numResults,
+            filterWatched,
+            maxTurns,
             traktWatchedIdSet,
             traktRatedIdSet,
             filterCandidates,
