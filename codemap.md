@@ -7,7 +7,7 @@ AI-powered Stremio addon that provides personalized movie and series recommendat
 - `server.js` — Express HTTP server, routing, config decryption, rate limiting, graceful shutdown. **Main entry point** (`node server.js`).
 - `addon.js` — Core addon logic: AI processing via Gemini, TMDB/Trakt API integration, LRU caching, catalog/meta/stream handlers.
 - `database.js` — SQLite persistence layer for Trakt.tv OAuth tokens (CRUD via `initDb`, `storeTokens`, `getTokens`).
-- `package.json` — Dependency manifest. Key deps: `stremio-addon-sdk`, `@google/generative-ai`, `express`, `sqlite`. Managed via pnpm.
+- `package.json` — Dependency manifest. Key deps: `stremio-addon-sdk`, `@google/generative-ai`, `express`, `better-sqlite3`. Managed via pnpm.
 - `Dockerfile` — Container build on `node:23` with corepack + pnpm. Entry: `CMD ["node", "server.js"]`.
 
 ## Request Flow

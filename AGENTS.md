@@ -11,7 +11,7 @@ For deep work on a specific folder, also read that folder's `codemap.md`.
 
 ## Quick Reference
 
-- **Stack**: Node.js (CommonJS), Express, `stremio-addon-sdk`, Google Gemini AI, TMDB, Trakt.tv
+- **Stack**: Node.js (CommonJS), Express, `stremio-addon-sdk`, Google Gemini AI, TMDB, Trakt.tv, `better-sqlite3`
 - **Entry point**: `server.js` → `addon.js`
 - **Port**: hardcoded `7000`, listens on `0.0.0.0`
 - **No test suite, no linter, no formatter configured**
@@ -21,10 +21,8 @@ For deep work on a specific folder, also read that folder's `codemap.md`.
 
 ```bash
 pnpm start              # Production: node server.js
-pnpm start:dev         # Dev with logging (uses ENABLE_LOGGING=true)
+pnpm start:dev         # Dev with logging (uses cross-env for cross-platform compatibility)
 ```
-
-> **Windows gotcha**: `start:dev` uses Unix-style `ENABLE_LOGGING=true node server.js` — it will fail on Windows cmd/PowerShell. Use `$env:ENABLE_LOGGING="true"; node server.js` or install `cross-env`.
 
 ## Required Environment Variables
 

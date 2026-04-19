@@ -28,7 +28,7 @@ An intelligent search addon for Stremio powered by Google's Gemini AI. Get perso
 4. Install
 5. Buy me a coffee :)
    <br/><br/>
-   <a href="https://buymeacoffee.com/itcon">
+   <a href="https://buymeacoffee.com/eremesng">
    <img src="public/bmc.png" alt="Buy Me A Coffee" height="40" />
    </a>
 
@@ -456,17 +456,33 @@ Here are some examples showing how versatile this addon is.
 
 ### Environment Variables
 
-When self-hosting the addon, you can configure the following environment variables in a `.env` file:
+A ready-to-use template lives at [`.env.example`](./.env.example) in the repository root. Copy it to `.env` and fill in the values:
 
-- `HOST` - Your domain/hostname without protocol (e.g., `example.com` or `localhost:7000`)
-- `TRAKT_CLIENT_ID` - Your Trakt API client ID
-- `TRAKT_CLIENT_SECRET` - Your Trakt API client secret
-- `ENCRYPTION_KEY` - Key used for encrypting sensitive configuration data
-- `RPDB_API_KEY` - API key for RPDB integration
-- `ENABLE_LOGGING` - Set to "true" to enable logging
-- `GITHUB_TOKEN` - GitHub token for issue submission
-- `RECAPTCHA_SECRET_KEY` - Secret key for reCAPTCHA
-- `ADMIN_TOKEN` - Token required for accessing cache management endpoints (new)
+```bash
+cp .env.example .env
+```
+
+> **Note on end-user API keys.** Google Gemini and TMDB keys are **not** server-side environment variables. Each addon user enters them on the `/configure` page; the values are encrypted with `ENCRYPTION_KEY` (AES-256-CBC) and travel as an encrypted segment in the manifest URL. See `utils/crypto.js` and `public/configure.html`.
+
+#### Required
+
+| Variable | Purpose |
+| --- | --- |
+| `ENCRYPTION_KEY` | AES-256-CBC key used to encrypt user configuration. **Must be at least 32 characters** — the server exits on startup otherwise. Generate one with `openssl rand -hex 32`. |
+| `HOST` | Public domain of the addon, without protocol (e.g. `my-addon.example.com`). Used to build manifest URLs and the Trakt OAuth callback. |
+| `TRAKT_CLIENT_ID` | Trakt.tv OAuth application client ID. Create one at <https://trakt.tv/oauth/applications>. |
+| `TRAKT_CLIENT_SECRET` | Trakt.tv OAuth application client secret. The OAuth redirect URI must match `https://${HOST}/callback`. |
+
+#### Optional
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RPDB_API_KEY` | — | Rating Poster DB key. Adds rating overlays on posters. Get one at <https://ratingposterdb.com/>. |
+| `FANART_API_KEY` | — | Fanart.tv key. Enables additional artwork (logos, clearart, etc.). Get one at <https://fanart.tv/get-an-api-key/>. |
+| `ADMIN_TOKEN` | `change-me-in-env-file` | Protects the `/cache/*` administration endpoints. **Change this in any public deployment** — the default is intentionally insecure. |
+| `ENABLE_LOGGING` | `false` | Enables verbose logging. Must be the literal string `"true"`; any other value (`1`, `yes`, `on`) is treated as `false`. |
+| `GITHUB_TOKEN` | — | GitHub Personal Access Token with `repo` or `public_repo` scope. Required only if you enable the in-app issue reporting form. |
+| `RECAPTCHA_SECRET_KEY` | — | Google reCAPTCHA v2/v3 secret. Validates the issue reporting form to prevent spam. Get one at <https://www.google.com/recaptcha/admin>. |
 
 ### Admin Endpoints
 
