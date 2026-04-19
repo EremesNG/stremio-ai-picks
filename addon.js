@@ -1,5 +1,5 @@
 const { addonBuilder } = require("stremio-addon-sdk");
-const { GoogleGenerativeAI, GoogleSearch } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const fetch = require("node-fetch").default;
 const logger = require("./utils/logger");
 const path = require("path");
@@ -2453,8 +2453,7 @@ function deserializeAllCaches(data) {
  * @returns {Promise<{type: string, genres: string[]}>} - The discovered type and genres
  */
 async function discoverTypeAndGenres(query, geminiKey, geminiModel) {
-  const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: geminiModel });
+  const ai = new GoogleGenAI({ apiKey: geminiKey });
 
   const promptText = `
 Analyze this recommendation query: "${query}"
@@ -2463,22 +2462,17 @@ Determine:
 1. What type of content is being requested (movie, series, or ambiguous)
 2. What genres are relevant to this query (be specific and use standard genre names)
 
-Respond in a single line with pipe-separated format:
-type|genre1,genre2,genre3
+Respond with a single JSON object matching this shape:
+{
+  "type": "movie|series|ambiguous",
+  "genres": ["genre1", "genre2", "genre3"]
+}
 
 Where:
 - type is one of: movie, series, ambiguous
-- genres are comma-separated without spaces or all if no specific genres are discovered in the query
+- genres is an array of standard genre names, or ["all"] if no specific genres are discovered in the query
 
-Examples:
-movie|action,thriller,sci-fi
-series|comedy,drama
-ambiguous|romance,comedy
-movie|all
-series|all
-ambiguous|all
-
-Do not include any explanatory text before or after your response. Just the single line.
+Do not include any explanatory text before or after your response. Return only JSON.
 `;
 
   try {
@@ -2488,12 +2482,38 @@ Do not include any explanatory text before or after your response. Just the sing
     });
 
     // Use withRetry for the Gemini API call
-    const text = await withRetry(
+    const rawText = await withRetry(
       async () => {
         try {
-          const aiResult = await model.generateContent(promptText);
-          const response = await aiResult.response;
-          const responseText = response.text().trim();
+          const config = {
+            responseMimeType: "application/json",
+            responseJsonSchema: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  enum: ["movie", "series", "ambiguous"],
+                },
+                genres: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+              },
+              required: ["type", "genres"],
+              propertyOrdering: ["type", "genres"],
+            },
+          };
+
+          if (/2\.5|[3-9]\./i.test(geminiModel)) {
+            config.thinkingConfig = { thinkingBudget: 256 };
+          }
+
+          const aiResult = await ai.models.generateContent({
+            model: geminiModel,
+            config,
+            contents: promptText,
+          });
+          const responseText = aiResult.text.trim();
 
           // Log successful response with more details
           logger.info("Genre discovery API response", {
@@ -2504,7 +2524,7 @@ Do not include any explanatory text before or after your response. Just the sing
             responseTextSample: responseText,
           });
 
-          return responseText;
+          return aiResult.text;
         } catch (error) {
           // Enhance error with status for retry logic
           logger.error("Genre discovery API call failed", {
@@ -2526,33 +2546,18 @@ Do not include any explanatory text before or after your response. Just the sing
       }
     );
 
-    // Extract the first line in case there's multiple lines
-    const firstLine = text.split("\n")[0].trim();
-
-    // Try to parse the pipe-separated format
+    // Try to parse the JSON format
     try {
-      // Split by pipe to get type and genres
-      const parts = firstLine.split("|");
-
-      if (parts.length !== 2) {
-        logger.error("Invalid format in genre discovery response", {
-          text: firstLine,
-          parts: parts.length,
-        });
-        return { type: "ambiguous", genres: [] };
-      }
-
-      // Get type and normalize it
-      let type = parts[0].trim().toLowerCase();
-      if (type !== "movie" && type !== "series") {
-        type = "ambiguous";
-      }
-
-      // Get genres
-      const genres = parts[1]
-        .split(",")
-        .map((g) => g.trim())
-        .filter((g) => g.length > 0 && g.toLowerCase() !== "ambiguous");
+      const parsed = JSON.parse(rawText);
+      const type =
+        parsed && typeof parsed.type === "string"
+          ? parsed.type.trim().toLowerCase()
+          : "ambiguous";
+      const genres = Array.isArray(parsed?.genres)
+        ? parsed.genres
+            .map((g) => (typeof g === "string" ? g.trim() : ""))
+            .filter((g) => g.length > 0 && g.toLowerCase() !== "ambiguous")
+        : [];
 
       // If the only genre is "all", clear the genres array to use all genres
       if (genres.length === 1 && genres[0].toLowerCase() === "all") {
@@ -2582,10 +2587,9 @@ Do not include any explanatory text before or after your response. Just the sing
     } catch (error) {
       logger.error("Failed to parse genre discovery response", {
         error: error.message,
-        text: firstLine,
-        fullResponse: text,
+        fullResponse: rawText,
       });
-      return { type: "ambiguous", genres: [] };
+      throw error;
     }
   } catch (error) {
     logger.error("Genre discovery API error", {
@@ -3200,8 +3204,7 @@ const catalogHandler = async function (args, req) {
     }
 
     try {
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: geminiModel });
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
       const genreCriteria = extractGenreCriteria(searchQuery);
       const currentYear = new Date().getFullYear();
 
@@ -3409,14 +3412,12 @@ const catalogHandler = async function (args, req) {
       if (type === 'movie') {
         examplesText = [
           "EXAMPLES:",
-          "movie|The Matrix|1999",
-          "movie|Inception|2010",
+          '{"recommendations":[{"type":"movie","name":"The Matrix","year":1999},{"type":"movie","name":"Inception","year":2010}]}',
         ].join('\n');
       } else {
         examplesText = [
           "EXAMPLES:",
-          "series|Breaking Bad|2008",
-          "series|Game of Thrones|2011",
+          '{"recommendations":[{"type":"series","name":"Breaking Bad","year":2008},{"type":"series","name":"Game of Thrones","year":2011}]}',
         ].join('\n');
       }
 
@@ -3445,27 +3446,29 @@ const catalogHandler = async function (args, req) {
         `3. GENERAL RECOMMENDATIONS: For ALL other queries, provide diverse recommendations that best match the query's theme, genre, and mood.`,
         `   - Order these results by their relevance to the query.`,
         "CRITICAL REQUIREMENTS:",
-        `- You MUST use the Google Search tool to find ALL recommendations. Your internal knowledge is outdated and should only be used in conjunction with Google search tool for this task.`,]);
-        if (traktData) {
-          promptText.push(
-            `- DO NOT recommend any content that appears in the user's watch history or ratings above.`,
-            `- Recommend content that is SIMILAR to the user's highly rated content but NOT THE SAME ones.`
-          );
-        }
-        promptText = promptText.concat([
+        `- You MUST use the Google Search tool to find ALL recommendations. Your internal knowledge is outdated and should only be used in conjunction with Google search tool for this task.`,
+      ]);
+
+      if (traktData) {
+        promptText.push(
+          `- DO NOT recommend any content that appears in the user's watch history or ratings above.`,
+          `- Recommend content that is SIMILAR to the user's highly rated content but NOT THE SAME ones.`
+        );
+      }
+
+      promptText = promptText.concat([
         `- You MUST return upto ${numResults} ${type} recommendations. If you can't find enough perfect matches, broaden your criteria while staying within the genre/theme requirements.`,
         `- Prioritize quality over exact matching - it's better to recommend a great content that's somewhat related than a mediocre content that perfectly matches all criteria.`,
         `- If the user has watched many content in the requested genre, consider recommending lesser-known gems, international films, or recent releases they might have missed.`,
         "",
-        "RESPONSE FORMAT: You MUST respond in the following format (without any additional commentary):",
-        "[type]|[name]|[year]",
+        "RESPONSE FORMAT: Return a single JSON object with a recommendations array of { type, name, year } objects.",
+        "Do not include any commentary or markdown.",
         "",
         examplesText,
         "",
         "RULES:",
-        "- Use | separator",
-        "- Year: YYYY format",
         `- Type: Accurately label each item as 'movie' or 'series'.`,
+        "- Year: YYYY format",
         "- Titles: Provide clean, official titles only. Do NOT add extra text like '(film)', '(documentary)', or other descriptions.",
         "- Content: ONLY include official, released movies and TV series. Exclude games, books, fan-made content, and stage productions.",
         "- Only best matches that strictly match ALL query requirements",
@@ -3502,12 +3505,43 @@ const catalogHandler = async function (args, req) {
       });
 
       // Use withRetry for the Gemini API call
-      const text = await withRetry(
+      const rawText = await withRetry(
         async () => {
           try {
-            const aiResult = await model.generateContent(promptText);
-            const response = await aiResult.response;
-            const responseText = response.text().trim();
+            const config = {
+              responseMimeType: "application/json",
+              responseJsonSchema: {
+                type: "object",
+                properties: {
+                  recommendations: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        type: { type: "string", enum: ["movie", "series"] },
+                        name: { type: "string" },
+                        year: { type: "integer" },
+                      },
+                      required: ["type", "name", "year"],
+                      propertyOrdering: ["type", "name", "year"],
+                    },
+                  },
+                },
+                required: ["recommendations"],
+                propertyOrdering: ["recommendations"],
+              },
+            };
+
+            if (/2\.5|[3-9]\./i.test(geminiModel)) {
+              config.thinkingConfig = { thinkingBudget: 1024 };
+            }
+
+            const aiResult = await ai.models.generateContent({
+              model: geminiModel,
+              config,
+              contents: promptText,
+            });
+            const responseText = aiResult.text.trim();
 
             logger.info("Gemini API response", {
               duration: `${Date.now() - startTime}ms`,
@@ -3520,7 +3554,7 @@ const catalogHandler = async function (args, req) {
                 (responseText.length > 100 ? "..." : ""),
             });
 
-            return responseText;
+            return aiResult.text;
           } catch (error) {
             logger.error("Gemini API call failed", {
               error: error.message,
@@ -3541,15 +3575,24 @@ const catalogHandler = async function (args, req) {
         }
       );
 
-      // Process the response text
-      const lines = text
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("type|"));
+      // Process the response JSON
+      let parsed;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (error) {
+        logger.error("Failed to parse Gemini recommendation JSON", {
+          error: error.message,
+          fullResponse: rawText,
+        });
+        throw error;
+      }
 
-      logger.debug("Parsed recommendation lines", {
-        totalLines: text.split("\n").length,
-        validLines: lines.length,
+      const recommendationsList = Array.isArray(parsed?.recommendations)
+        ? parsed.recommendations
+        : [];
+
+      logger.debug("Parsed recommendation items", {
+        totalItems: recommendationsList.length,
       });
 
       const recommendations = {
@@ -3560,51 +3603,19 @@ const catalogHandler = async function (args, req) {
       let validRecommendations = 0;
       let invalidLines = 0;
 
-      for (const line of lines) {
+      for (const item of recommendationsList) {
         try {
-          const parts = line.split("|");
+          const lineType =
+            typeof item?.type === "string" ? item.type.trim().toLowerCase() : "";
+          const name = typeof item?.name === "string" ? item.name.trim() : "";
+          const yearNum = Number(item?.year);
 
-          let lineType, name, year;
-
-          if (parts.length === 3) {
-            [lineType, name, year] = parts.map((s) => s.trim());
-          } else if (parts.length === 2) {
-            lineType = parts[0].trim();
-            const nameWithYear = parts[1].trim();
-
-            const yearMatch = nameWithYear.match(/\((\d{4})\)$/);
-            if (yearMatch) {
-              year = yearMatch[1];
-              name = nameWithYear
-                .substring(0, nameWithYear.lastIndexOf("("))
-                .trim();
-            } else {
-              const anyYearMatch = nameWithYear.match(/\b(19\d{2}|20\d{2})\b/);
-              if (anyYearMatch) {
-                year = anyYearMatch[0];
-                name = nameWithYear.replace(anyYearMatch[0], "").trim();
-              } else {
-                logger.debug("Missing year in recommendation", {
-                  nameWithYear,
-                });
-                invalidLines++;
-                continue;
-              }
-            }
-          } else {
-            logger.debug("Invalid recommendation format", { line });
-            invalidLines++;
-            continue;
-          }
-
-          const yearNum = parseInt(year);
-
-          if (!lineType || !name || isNaN(yearNum)) {
+          if (!lineType || !name || !Number.isInteger(yearNum)) {
             logger.debug("Invalid recommendation data", {
               lineType,
               name,
-              year,
-              isValidYear: !isNaN(yearNum),
+              year: item?.year,
+              isValidYear: Number.isInteger(yearNum),
             });
             invalidLines++;
             continue;
@@ -3627,7 +3638,7 @@ const catalogHandler = async function (args, req) {
           }
         } catch (error) {
           logger.error("Error processing recommendation line", {
-            line,
+            item,
             error: error.message,
           });
           invalidLines++;
@@ -4004,23 +4015,57 @@ const metaHandler = async function (args) {
       2.  **Final Output:** Provide **ONLY** the combined list of recommendations. Do not include any headers (like "PART 1"), introductory text, or explanations.
 
       **Format:**
-      Your response must be a list of pipe-separated values, with each entry on a new line:
-      type|name|year
+      Return a single JSON object with a recommendations array of { type, name, year } objects.
+      Do not include any commentary or markdown.
 
       **Example (if the source was 'The Dark Knight' and numResults was 5):**
-      movie|Batman Begins|2005
-      movie|The Dark Knight Rises|2012
-      movie|The Town|2010
-      movie|Zodiac|2007
-      movie|Prisoners|2013
+      {"recommendations":[
+        {"type":"movie","name":"Batman Begins","year":2005},
+        {"type":"movie","name":"The Dark Knight Rises","year":2012},
+        {"type":"movie","name":"The Town","year":2010},
+        {"type":"movie","name":"Zodiac","year":2007},
+        {"type":"movie","name":"Prisoners","year":2013}
+      ]}
       `;
 
-      const genAI = new GoogleGenerativeAI(GeminiApiKey);
-      const model = genAI.getGenerativeModel({ model: GeminiModel || DEFAULT_GEMINI_MODEL });
+      const ai = new GoogleGenAI({ apiKey: GeminiApiKey });
+
+      const config = {
+        responseMimeType: "application/json",
+        responseJsonSchema: {
+          type: "object",
+          properties: {
+            recommendations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  type: { type: "string", enum: ["movie", "series"] },
+                  name: { type: "string" },
+                  year: { type: "integer" },
+                },
+                required: ["type", "name", "year"],
+                propertyOrdering: ["type", "name", "year"],
+              },
+            },
+          },
+          required: ["recommendations"],
+          propertyOrdering: ["recommendations"],
+        },
+      };
+
+      const modelName = GeminiModel || DEFAULT_GEMINI_MODEL;
+      if (/2\.5|[3-9]\./i.test(modelName)) {
+        config.thinkingConfig = { thinkingBudget: 1024 };
+      }
       
       const aiResult = await withRetry(
         async () => {
-          return await model.generateContent(promptText);
+          return await ai.models.generateContent({
+            model: modelName,
+            config,
+            contents: promptText,
+          });
         },
         {
           maxRetries: 3,
@@ -4030,13 +4075,28 @@ const metaHandler = async function (args) {
         }
       );
       
-      const responseText = aiResult.response.text().trim();
-      const lines = responseText.split('\n').map(line => line.trim()).filter(Boolean);
+      const responseText = aiResult.text.trim();
 
-      const videoPromises = lines.map(async (line) => {
-        const parts = line.split('|');
-        if (parts.length !== 3) return null;
-        const [recType, name, year] = parts.map(p => p.trim());
+      let parsed;
+      try {
+        parsed = JSON.parse(responseText);
+      } catch (error) {
+        logger.error("Failed to parse Gemini similar-content JSON", {
+          error: error.message,
+          fullResponse: responseText,
+        });
+        throw error;
+      }
+
+      const recommendationsList = Array.isArray(parsed?.recommendations)
+        ? parsed.recommendations
+        : [];
+
+      const videoPromises = recommendationsList.map(async (rec) => {
+        const recType = typeof rec?.type === 'string' ? rec.type.trim().toLowerCase() : '';
+        const name = typeof rec?.name === 'string' ? rec.name.trim() : '';
+        const year = Number(rec?.year);
+        if (!recType || !name || !Number.isInteger(year)) return null;
         const tmdbData = await searchTMDB(name, recType, year, TmdbApiKey);
         if (tmdbData && tmdbData.imdb_id) {
           

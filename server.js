@@ -1547,11 +1547,13 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
     if (GeminiApiKey) {
       validations.push((async () => {
         try {
-          const { GoogleGenerativeAI } = require("@google/generative-ai");
-          const genAI = new GoogleGenerativeAI(GeminiApiKey);
-          const model = genAI.getGenerativeModel({ model: modelToUse });
-          const result = await model.generateContent("Test prompt");
-          const responseText = result.response.text();
+          const { GoogleGenAI } = require("@google/genai");
+          const ai = new GoogleGenAI({ apiKey: GeminiApiKey });
+          const result = await ai.models.generateContent({
+            model: modelToUse,
+            contents: "Test prompt",
+          });
+          const responseText = result.text;
           if (responseText.length > 0) {
             validationResults.gemini = true;
           } else {

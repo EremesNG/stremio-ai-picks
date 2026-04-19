@@ -9,7 +9,7 @@
     "start:dev": "cross-env ENABLE_LOGGING=true node server.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^1.50.1",
     "better-sqlite3": "^12.9.0",
     "compression": "^1.7.4",
     "dotenv": "^16.3.1",
