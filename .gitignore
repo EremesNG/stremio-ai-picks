@@ -24,3 +24,4 @@ howto.txt
 monitor.sh
 trakt_tokens.db
 /cache_data/
+.vercel
