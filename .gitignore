@@ -17,9 +17,12 @@ logs/
 .DS_Store
 
 # Unnecessary files
-index.html
 howto.txt
 
 # Server specific
 monitor.sh
 trakt_tokens.db
+/cache_data/
+.vercel
+/test-results/
+/.playwright-cli/

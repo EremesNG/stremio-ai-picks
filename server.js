@@ -15,13 +15,17 @@ try {
   logger.warn("dotenv module not found, continuing without .env file support");
 }
 
-const { serveHTTP } = require("stremio-addon-sdk");
-const { addonInterface, catalogHandler, determineIntentFromKeywords } = require("./addon");
-const express = require("express");
-const compression = require("compression");
-const rateLimit = require("express-rate-limit");
 const fs = require("fs");
 const path = require("path");
+const {
+  addonInterface,
+  catalogHandler,
+  determineIntentFromKeywords,
+  purgeEmptyAiCacheEntries,
+  hydrateQueryCounter,
+} = require("./addon");
+const express = require("express");
+const rateLimit = require("express-rate-limit");
 const logger = require("./utils/logger");
 const { handleIssueSubmission } = require("./utils/issueHandler");
 const {
@@ -29,20 +33,13 @@ const {
   decryptConfig,
   isValidEncryptedFormat,
 } = require("./utils/crypto");
-const zlib = require("zlib");
 const { initDb, storeTokens, getTokens } = require("./database");
+const app = express();
+
+app.use(express.json({ limit: "10mb" }));
 
 // Admin token for cache management
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "change-me-in-env-file";
-
-// Cache persistence configuration
-const CACHE_BACKUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-const CACHE_FOLDER = path.join(__dirname, "cache_data");
-
-// Ensure cache folder exists
-if (!fs.existsSync(CACHE_FOLDER)) {
-  fs.mkdirSync(CACHE_FOLDER, { recursive: true });
-}
 
 // Function to validate admin token
 const validateAdminToken = (req, res, next) => {
@@ -57,214 +54,22 @@ const validateAdminToken = (req, res, next) => {
   next();
 };
 
-// Function to save all caches to files
-async function saveCachesToFiles() {
-  try {
-    const { serializeAllCaches } = require("./addon");
-    const allCaches = serializeAllCaches();
-    const savePromises = [];
-    const results = {};
-    for (const [cacheName, cacheData] of Object.entries(allCaches)) {
-      const cacheFilePath = path.join(CACHE_FOLDER, `${cacheName}.json.gz`);
-      const tempCacheFilePath = `${cacheFilePath}.${process.pid}.tmp`;
-      const promise = (async () => {
-        try {
-          const jsonData = JSON.stringify(cacheData);
-          const compressed = zlib.gzipSync(jsonData);
-          await fs.promises.writeFile(tempCacheFilePath, compressed);
-          await fs.promises.rename(tempCacheFilePath, cacheFilePath);
-          if (cacheName === "stats") {
-            results[cacheName] = {
-              success: true,
-              originalSize: jsonData.length,
-              compressedSize: compressed.length,
-              compressionRatio:
-                ((compressed.length / jsonData.length) * 100).toFixed(2) + "%",
-              path: cacheFilePath,
-            };
-          } else {
-            results[cacheName] = {
-              success: true,
-              size: cacheData.entries ? cacheData.entries.length : 0,
-              originalSize: jsonData.length,
-              compressedSize: compressed.length,
-              compressionRatio:
-                ((compressed.length / jsonData.length) * 100).toFixed(2) + "%",
-              path: cacheFilePath,
-            };
-          }
-        } catch (err) {
-          logger.error(`Error saving ${cacheName} to file`, {
-            error: err.message,
-            stack: err.stack,
-          });
-          results[cacheName] = {
-            success: false,
-            error: err.message,
-          };
-          try {
-            if (fs.existsSync(tempCacheFilePath)) {
-              await fs.promises.unlink(tempCacheFilePath);
-            }
-          } catch (cleanupErr) {
-            logger.warn(
-              `Failed to delete temporary cache file: ${tempCacheFilePath}`,
-              {
-                error: cleanupErr.message,
-              }
-            );
-          }
-        }
-      })();
-      savePromises.push(promise);
-    }
-    await Promise.all(savePromises);
-    logger.info("Cache data saved to individual compressed files", {
-      timestamp: new Date().toISOString(),
-      cacheFolder: CACHE_FOLDER,
-      results,
-    });
-    return {
-      success: true,
-      timestamp: new Date().toISOString(),
-      cacheFolder: CACHE_FOLDER,
-      results,
-    };
-  } catch (error) {
-    logger.error("Error saving cache data to files", {
-      error: error.message,
-      stack: error.stack,
-    });
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-}
-
-// Function to load caches from files
-async function loadCachesFromFiles() {
-  try {
-    // Check if cache folder exists
-    if (!fs.existsSync(CACHE_FOLDER)) {
-      logger.info("No cache folder found, starting with empty caches", {
-        cacheFolder: CACHE_FOLDER,
-      });
-      return {
-        success: false,
-        reason: "No cache folder found",
-      };
-    }
-
-    // Get all cache files (both compressed and uncompressed for backward compatibility)
-    const files = fs
-      .readdirSync(CACHE_FOLDER)
-      .filter((file) => file.endsWith(".json.gz") || file.endsWith(".json"));
-
-    if (files.length === 0) {
-      logger.info("No cache files found, starting with empty caches", {
-        cacheFolder: CACHE_FOLDER,
-      });
-      return {
-        success: false,
-        reason: "No cache files found",
-      };
-    }
-
-    // Create an object to hold all cache data
-    const allCacheData = {};
-    const results = {};
-
-    // Read each cache file
-    for (const file of files) {
-      try {
-        const isCompressed = file.endsWith(".json.gz");
-        const cacheName = path.basename(
-          file,
-          isCompressed ? ".json.gz" : ".json"
-        );
-        const cacheFilePath = path.join(CACHE_FOLDER, file);
-
-        // Read the file
-        const fileData = await fs.promises.readFile(cacheFilePath);
-
-        let cacheDataJson;
-        if (isCompressed) {
-          // Decompress the data
-          cacheDataJson = zlib.gunzipSync(fileData).toString();
-        } else {
-          // Handle uncompressed files for backward compatibility
-          cacheDataJson = fileData.toString("utf8");
-        }
-
-        const cacheData = JSON.parse(cacheDataJson);
-
-        allCacheData[cacheName] = cacheData;
-        results[cacheName] = {
-          success: true,
-          entriesCount:
-            cacheName === "stats" ? "N/A" : cacheData.entries?.length || 0,
-          compressed: isCompressed,
-          path: cacheFilePath,
-        };
-      } catch (err) {
-        logger.error(`Error reading cache file ${file}`, {
-          error: err.message,
-          stack: err.stack,
-        });
-        results[file] = {
-          success: false,
-          error: err.message,
-        };
-        // Continue with other files even if one fails
-        continue;
-      }
-    }
-
-    // Deserialize the caches
-    const { deserializeAllCaches } = require("./addon");
-    const deserializeResults = deserializeAllCaches(allCacheData);
-
-    // Combine results
-    for (const [cacheName, result] of Object.entries(deserializeResults)) {
-      if (results[cacheName]) {
-        results[cacheName].deserialized = result;
-      }
-    }
-
-    logger.info("Cache data loaded from individual files", {
-      timestamp: new Date().toISOString(),
-      results,
-    });
-
-    return {
-      success: true,
-      results,
-    };
-  } catch (error) {
-    logger.error("Error loading cache data from files", {
-      error: error.message,
-      stack: error.stack,
-    });
-
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-}
-
 async function refreshTraktToken(username, refreshToken) {
   logger.info(`Attempting to refresh Trakt token for user: ${username}`);
   try {
     const response = await fetch("https://api.trakt.tv/oauth/token", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "stremio-ai-picks",
+        "trakt-api-version": "2",
+        "trakt-api-key": TRAKT_CLIENT_ID,
+      },
       body: JSON.stringify({
         refresh_token: refreshToken,
         client_id: process.env.TRAKT_CLIENT_ID,
         client_secret: process.env.TRAKT_CLIENT_SECRET,
-        redirect_uri: `${HOST}/aisearch/oauth/callback`,
+                redirect_uri: `${HOST}/oauth/callback`,
         grant_type: "refresh_token",
       }),
     });
@@ -275,7 +80,7 @@ async function refreshTraktToken(username, refreshToken) {
     }
 
     const tokenData = await response.json();
-    await storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
+    storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
     logger.info(`Successfully refreshed and stored new Trakt token for user: ${username}`);
 
     return {
@@ -295,11 +100,12 @@ if (ENABLE_LOGGING) {
   logger.info("Logging enabled via ENABLE_LOGGING environment variable");
 }
 
-const PORT = 7000;
 const HOST = process.env.HOST
-  ? `https://${process.env.HOST}`
-  : "https://stremio.itcon.au";
-const BASE_PATH = "/aisearch";
+  ? (process.env.HOST.startsWith("http://") || process.env.HOST.startsWith("https://")
+      ? process.env.HOST
+      : `https://${process.env.HOST}`)
+  : "https://github.com/EremesNG/stremio-ai-picks";
+const BASE_PATH = "";
 
 const DEFAULT_RPDB_KEY = process.env.RPDB_API_KEY;
 const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID;
@@ -307,9 +113,9 @@ const TRAKT_CLIENT_SECRET = process.env.TRAKT_CLIENT_SECRET;
 const TRAKT_API_BASE = "https://api.trakt.tv";
 
 const setupManifest = {
-  id: "au.itcon.aisearch",
-  version: "1.0.65",
-  name: "AI Search",
+  id: "eremesng.aipicks",
+  version: "1.0.0",
+  name: "AI Picks",
   description: "AI-powered movie and series recommendations",
   logo: `${HOST}${BASE_PATH}/logo.png`,
   background: `${HOST}${BASE_PATH}/bg.jpg`,
@@ -323,67 +129,13 @@ const setupManifest = {
   configurationURL: `${HOST}${BASE_PATH}/configure`,
 };
 
-const getConfiguredManifest = (geminiKey, tmdbKey) => ({
-  ...setupManifest,
-  behaviorHints: {
-    configurable: false,
-  },
-  catalogs: [
-    {
-      type: "movie",
-      id: "aisearch.top",
-      name: "AI Movie Search",
-      extra: [{ name: "search", isRequired: true }],
-      isSearch: true,
-    },
-    {
-      type: "series",
-      id: "aisearch.top",
-      name: "AI Series Search",
-      extra: [{ name: "search", isRequired: true }],
-      isSearch: true,
-    },
-  ],
-});
-
-async function startServer() {
+function startServer() {
   try {
-    await initDb();
-    // Load caches from files on startup
-    await loadCachesFromFiles();
-    const { purgeEmptyAiCacheEntries } = require("./addon");
+    initDb().catch((err) => logger.error("Failed to initialize database", { error: err.message }));
     logger.info("Running a one-time purge of empty AI cache entries...");
     const purgeStats = purgeEmptyAiCacheEntries();
     logger.info("Empty AI cache purge complete.", { purged: purgeStats.purged, remaining: purgeStats.remaining });
-
-    // Set up periodic cache saving
-    setInterval(async () => {
-      await saveCachesToFiles();
-    }, CACHE_BACKUP_INTERVAL_MS);
-
-    // Set up graceful shutdown handlers
-    const gracefulShutdown = async (signal) => {
-      logger.info(`Received ${signal}. Starting graceful shutdown...`);
-
-      try {
-        logger.info("Saving all caches and stats before shutdown...");
-        const result = await saveCachesToFiles();
-        logger.info("Cache save completed", { result });
-      } catch (error) {
-        logger.error("Error saving caches during shutdown", {
-          error: error.message,
-          stack: error.stack,
-        });
-      }
-
-      logger.info("Graceful shutdown completed. Exiting process.");
-      process.exit(0);
-    };
-
-    // Register shutdown handlers for different signals
-    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-    process.on("SIGHUP", () => gracefulShutdown("SIGHUP"));
+    hydrateQueryCounter().catch((err) => logger.error("Failed to hydrate query counter", { error: err.message }));
 
     if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
       logger.error(
@@ -394,27 +146,6 @@ async function startServer() {
         "Please set this environment variable before starting the server."
       );
       process.exit(1);
-    }
-
-    const app = express();
-    app.use(require("express").json({ limit: "10mb" }));
-    app.use(
-      compression({
-        level: 6,
-        threshold: 1024,
-      })
-    );
-
-    app.use("/aisearch", express.static(path.join(__dirname, "public")));
-    app.use("/", express.static(path.join(__dirname, "public")));
-
-    if (ENABLE_LOGGING) {
-      logger.debug("Static file paths:", {
-        publicDir: path.join(__dirname, "public"),
-        baseUrl: HOST,
-        logoUrl: `${HOST}${BASE_PATH}/logo.png`,
-        bgUrl: `${HOST}${BASE_PATH}/bg.jpg`,
-      });
     }
 
     app.use((req, res, next) => {
@@ -484,16 +215,15 @@ async function startServer() {
       next();
     });
 
+    // Serve static files from public/ directory
+    app.use(express.static(path.join(__dirname, "public")));
+
     const addonRouter = require("express").Router();
     const routeHandlers = {
       manifest: (req, res, next) => {
         next();
       },
       catalog: (req, res, next) => {
-        const searchParam = req.params.extra?.split("search=")[1];
-        const searchQuery = searchParam
-          ? decodeURIComponent(searchParam)
-          : req.query.search || "";
         next();
       },
       ping: (req, res) => {
@@ -507,6 +237,24 @@ async function startServer() {
     };
 
     ["/"].forEach((routePath) => {
+      // Serve index.html at root
+      addonRouter.get(routePath, (req, res) => {
+        (async () => {
+          try {
+            const indexPath = path.join(__dirname, "public", "index.html");
+            const html = await fs.promises.readFile(indexPath, "utf8");
+            res.setHeader("Content-Type", "text/html");
+            res.send(html);
+          } catch (error) {
+            logger.error("Error loading index page", {
+              error: error.message,
+              stack: error.stack,
+            });
+            res.status(500).send("Error loading index page");
+          }
+        })();
+      });
+
       addonRouter.get(routePath + "manifest.json", (req, res) => {
         const baseManifest = {
           ...setupManifest,
@@ -543,7 +291,7 @@ async function startServer() {
                     if (!homepageQueries || homepageQueries.trim() === '') {
                         homepageQueries = "AI Recommendations:recommend a hidden gem movie, AI Recommendations:recommend a binge-worthy series";
                     }
-                    const catalogEntries = homepageQueries.split(',').map(q => q.trim()).filter(Boolean);
+                    const catalogEntries = homepageQueries.split('|||').map(q => q.trim()).filter(Boolean);
                     const homepageCatalogs = [];
 
                     catalogEntries.forEach((entry, index) => {
@@ -557,7 +305,7 @@ async function startServer() {
                         }
 
                         const intent = determineIntentFromKeywords(query);
-                        const id_prefix = `aisearch.home.${index}`;
+                        const id_prefix = `aipicks.home.${index}`;
                         const name = title;
 
                         if (intent === 'movie' || intent === 'ambiguous') {
@@ -632,7 +380,7 @@ async function startServer() {
 
               // If user is configured with Trakt, get and refresh tokens if needed
               if (decryptedConfig.traktUsername) {
-                let tokenData = await getTokens(decryptedConfig.traktUsername);
+                let tokenData = getTokens(decryptedConfig.traktUsername);
                 if (tokenData) {
                   // Check if token is expired (with a 5-minute buffer)
                   if (tokenData.expires_at < Date.now() - 5 * 60 * 1000) {
@@ -782,97 +530,103 @@ async function startServer() {
 
       addonRouter.get(routePath + "ping", routeHandlers.ping);
       addonRouter.get(routePath + "configure", (req, res) => {
-        const configurePath = path.join(__dirname, "public", "configure.html");
+        (async () => {
+          try {
+            const templatePath = path.join(__dirname, "public", "configure.html");
+            let html = await fs.promises.readFile(templatePath, "utf8");
 
-        if (!fs.existsSync(configurePath)) {
-          return res.status(404).send("Configuration page not found");
-        }
+            html = html.replace('const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";', `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID || ""}";`);
+            html = html.replace('const HOST = "your-domain.com";', `const HOST = "${HOST.replace(/^https?:\/\//, "")}";`);
 
-        fs.readFile(configurePath, "utf8", (err, data) => {
-          if (err) {
-            return res.status(500).send("Error loading configuration page");
+            res.setHeader("Content-Type", "text/html");
+            res.send(html);
+          } catch (error) {
+            logger.error("Error loading configuration page", {
+              error: error.message,
+              stack: error.stack,
+            });
+            res.status(500).send("Error loading configuration page");
           }
-
-          const hostWithoutProtocol = HOST.replace(/^https?:\/\//, "");
-          const modifiedHtml = data
-            .replace(
-              'const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";',
-              `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID}";`
-            )
-            .replace(
-              'const HOST = "stremio.itcon.au";',
-              `const HOST = "${hostWithoutProtocol}";`
-            )
-            .replace('src="logo.png"', `src="${BASE_PATH}/logo.png"`)
-            .replace('src="bmc.png"', `src="${BASE_PATH}/bmc.png"`);
-
-          res.send(modifiedHtml);
-        });
+        })();
       });
 
       // Add Trakt.tv OAuth callback endpoint
-      addonRouter.get(routePath + "oauth/callback", async (req, res) => {
-        try {
-          const { code, state } = req.query;
+       addonRouter.get(routePath + "oauth/callback", async (req, res) => {
+         try {
+           const { code } = req.query;
+          const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0].trim();
+          const forwardedHost = req.get("x-forwarded-host")?.split(",")[0].trim();
+          const requestOrigin = `${forwardedProto || req.protocol}://${forwardedHost || req.get("host")}`;
 
-          if (!code) {
-            return res.status(400).send(`
-              <html>
-                <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
-                  <h2>Authentication Failed</h2>
-                  <p>No authorization code received from Trakt.tv</p>
-                  <script>
-                    window.close();
-                  </script>
-                </body>
-              </html>
-            `);
+           if (!code) {
+             return res.status(400).send(`
+               <html lang="en">
+                 <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
+                   <h2>Authentication Failed</h2>
+                   <p>No authorization code received from Trakt.tv</p>
+                   <script>
+                     window.close();
+                   </script>
+                 </body>
+               </html>
+             `);
           }
 
           // Exchange the code for an access token
-          const tokenResponse = await fetch(
-            "https://api.trakt.tv/oauth/token",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                code,
-                client_id: TRAKT_CLIENT_ID,
-                client_secret: TRAKT_CLIENT_SECRET,
-                redirect_uri: `${HOST}/aisearch/oauth/callback`,
-                grant_type: "authorization_code",
-              }),
-            }
-          );
+           const tokenResponse = await fetch(
+              "https://api.trakt.tv/oauth/token",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "User-Agent": "stremio-ai-picks",
+                   "trakt-api-version": "2",
+                   "trakt-api-key": TRAKT_CLIENT_ID,
+                 },
+                  // Match the browser-originated redirect URI exactly, including when behind proxies.
+                  // Use the active request base path for the OAuth callback.
+                body: JSON.stringify({
+                  code,
+                  client_id: TRAKT_CLIENT_ID,
+                  client_secret: TRAKT_CLIENT_SECRET,
+                  redirect_uri: `${requestOrigin}${req.baseUrl || ""}${req.route?.path || "/oauth/callback"}`,
+                  grant_type: "authorization_code",
+                }),
+              }
+            );
 
           if (!tokenResponse.ok) {
-            throw new Error("Failed to exchange code for token");
-          }
+            const errorBody = await tokenResponse.text();
+              logger.error("Trakt token exchange failed", {
+                status: tokenResponse.status,
+                body: errorBody,
+                redirect_uri: `${requestOrigin}${req.baseUrl || ""}${req.route?.path || "/oauth/callback"}`,
+              });
+              throw new Error(`Failed to exchange code for token: ${tokenResponse.status}`);
+            }
 
           const tokenData = await tokenResponse.json();
 
-          // Send the token data back to the parent window
-          res.send(`
-            <html>
-              <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
-                <h2>Authentication Successful</h2>
-                <p>You can close this window now.</p>
-                <script>
-                  if (window.opener) {
-                    window.opener.postMessage({
-                      type: "TRAKT_AUTH_SUCCESS",
-                      access_token: "${tokenData.access_token}",
-                      refresh_token: "${tokenData.refresh_token}",
-                      expires_in: ${tokenData.expires_in}
-                    }, "${HOST}");
-                    window.close();
-                  }
-                </script>
-              </body>
-            </html>
-          `);
+           // Send the token data back to the parent window
+           res.send(`
+             <html lang="en">
+               <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
+                 <h2>Authentication Successful</h2>
+                 <p>You can close this window now.</p>
+                 <script>
+                     if (window.opener) {
+                       window.opener.postMessage({
+                         type: "TRAKT_AUTH_SUCCESS",
+                         access_token: "${tokenData.access_token}",
+                         refresh_token: "${tokenData.refresh_token}",
+                         expires_in: ${tokenData.expires_in}
+                     }, "${requestOrigin}");
+                     window.close();
+                   }
+                 </script>
+               </body>
+             </html>
+           `);
         } catch (error) {
           logger.error("OAuth callback error:", {
             error: error.message,
@@ -890,36 +644,28 @@ async function startServer() {
           return res.status(400).send("Invalid configuration format");
         }
 
-        const configurePath = path.join(__dirname, "public", "configure.html");
-        if (!fs.existsSync(configurePath)) {
-          return res.status(404).send("Configuration page not found");
-        }
+         (async () => {
+           try {
+             const templatePath = path.join(__dirname, "public", "configure.html");
+             let html = await fs.promises.readFile(templatePath, "utf8");
 
-        fs.readFile(configurePath, "utf8", (err, data) => {
-          if (err) {
-            return res.status(500).send("Error loading configuration page");
+             html = html.replace('const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";', `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID || ""}";`);
+             html = html.replace('const HOST = "your-domain.com";', `const HOST = "${HOST.replace(/^https?:\/\//, "")}";`);
+             html = html.replace(
+               /(<input\s+type="hidden"\s+id="existingConfigId"\s+name="existingConfigId"\s+value=")([^"]*)("\s*\/?>)/,
+               `$1${encryptedConfig}$3`
+             );
+
+            res.setHeader("Content-Type", "text/html");
+            res.send(html);
+          } catch (error) {
+            logger.error("Error loading configuration page", {
+              error: error.message,
+              stack: error.stack,
+            });
+            res.status(500).send("Error loading configuration page");
           }
-
-          const hostWithoutProtocol = HOST.replace(/^https?:\/\//, "");
-          let modifiedHtml = data
-            .replace(
-              'const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID";',
-              `const TRAKT_CLIENT_ID = "${TRAKT_CLIENT_ID}";`
-            )
-            .replace(
-              'const HOST = "stremio.itcon.au";',
-              `const HOST = "${hostWithoutProtocol}";`
-            )
-            .replace('src="logo.png"', `src="${BASE_PATH}/logo.png"`)
-            .replace('src="bmc.png"', `src="${BASE_PATH}/bmc.png"`);
-
-          modifiedHtml = modifiedHtml.replace(
-            'value=""',
-            `value="${encryptedConfig}"`
-          );
-
-          res.send(modifiedHtml);
-        });
+        })();
       });
 
       // Update the getConfig endpoint to handle the full path
@@ -1185,16 +931,6 @@ async function startServer() {
         }
       );
 
-      // Add endpoint to manually save caches to files
-      addonRouter.get(
-        routePath + "cache/save",
-        validateAdminToken,
-        async (req, res) => {
-          const result = await saveCachesToFiles();
-          res.json(result);
-        }
-      );
-
       // Add endpoint to set query counter
       addonRouter.post(
         routePath + "stats/count/set",
@@ -1233,14 +969,14 @@ async function startServer() {
 
         if (format === "json") {
           res.json({ count });
-        } else if (format === "widget") {
-          res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Stremio AI Search Stats</title>
+         } else if (format === "widget") {
+           res.send(`
+             <!DOCTYPE html>
+             <html lang="en">
+             <head>
+               <meta charset="UTF-8">
+               <meta name="viewport" content="width=device-width, initial-scale=1.0">
+               <title>Stremio AI Search Stats</title>
               <style>
                 body {
                   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1337,28 +1073,31 @@ async function startServer() {
         `);
       });
 
-      // Update Trakt.tv token refresh endpoint to use pre-configured credentials
-      addonRouter.post("/oauth/refresh", async (req, res) => {
-        try {
-          const { refresh_token } = req.body;
+       // Update Trakt.tv token refresh endpoint to use pre-configured credentials
+       addonRouter.post("/oauth/refresh", async (req, res) => {
+         try {
+           const { refresh_token } = req.body;
 
-          if (!refresh_token) {
-            return res.status(400).json({ error: "Missing refresh token" });
-          }
+           if (!refresh_token) {
+             return res.status(400).json({ error: "Missing refresh token" });
+           }
 
-          const response = await fetch("https://api.trakt.tv/oauth/token", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              refresh_token,
-              client_id: TRAKT_CLIENT_ID,
-              client_secret: TRAKT_CLIENT_SECRET,
-              redirect_uri: `${HOST}/aisearch/oauth/callback`,
-              grant_type: "refresh_token",
-            }),
-          });
+            const response = await fetch("https://api.trakt.tv/oauth/token", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "User-Agent": "stremio-ai-picks",
+                "trakt-api-version": "2",
+                "trakt-api-key": TRAKT_CLIENT_ID,
+              },
+             body: JSON.stringify({
+               refresh_token,
+               client_id: TRAKT_CLIENT_ID,
+               client_secret: TRAKT_CLIENT_SECRET,
+         redirect_uri: `${HOST}/oauth/callback`,
+               grant_type: "refresh_token",
+             }),
+           });
 
           if (!response.ok) {
             throw new Error("Failed to refresh token");
@@ -1377,9 +1116,8 @@ async function startServer() {
     });
 
     app.use("/", addonRouter);
-    app.use(BASE_PATH, addonRouter);
 
-    app.post(["/encrypt", "/aisearch/encrypt"], express.json(), async (req, res) => {
+    app.post("/encrypt", express.json(), async (req, res) => {
       try {
         const { configData, traktAuthData } = req.body;
         if (!configData) {
@@ -1388,7 +1126,7 @@ async function startServer() {
 
         // If Trakt data is present, store it in the database
         if (traktAuthData && traktAuthData.username) {
-          await storeTokens(
+          storeTokens(
             traktAuthData.username,
             traktAuthData.accessToken,
             traktAuthData.refreshToken,
@@ -1421,7 +1159,7 @@ async function startServer() {
       }
     });
 
-    app.post(["/decrypt", "/aisearch/decrypt"], express.json(), (req, res) => {
+    app.post("/decrypt", express.json(), (req, res) => {
       try {
         const { encryptedConfig } = req.body;
         if (!encryptedConfig) {
@@ -1451,7 +1189,7 @@ async function startServer() {
     });
 
     app.use(
-      ["/encrypt", "/decrypt", "/aisearch/encrypt", "/aisearch/decrypt"],
+      ["/encrypt", "/decrypt"],
       (req, res, next) => {
         res.header("Access-Control-Allow-Origin", "*");
         res.header(
@@ -1468,7 +1206,7 @@ async function startServer() {
       }
     );
 
-app.use(["/validate", "/aisearch/validate"], (req, res, next) => {
+app.use("/validate", (req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -1479,7 +1217,7 @@ app.use(["/validate", "/aisearch/validate"], (req, res, next) => {
   next();
 });
 
-app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) => {
+app.post("/validate", express.json(), async (req, res) => {
   const startTime = Date.now();
   try {
     const {
@@ -1499,7 +1237,7 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
       errors: {},
     };
     
-    const modelToUse = GeminiModel || "gemini-2.5-flash-lite";
+    const modelToUse = GeminiModel || "gemini-flash-lite-latest";
 
     if (ENABLE_LOGGING) {
       logger.debug("Validation request received", {
@@ -1517,11 +1255,13 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
     if (GeminiApiKey) {
       validations.push((async () => {
         try {
-          const { GoogleGenerativeAI } = require("@google/generative-ai");
-          const genAI = new GoogleGenerativeAI(GeminiApiKey);
-          const model = genAI.getGenerativeModel({ model: modelToUse });
-          const result = await model.generateContent("Test prompt");
-          const responseText = result.response.text();
+          const { GoogleGenAI } = require("@google/genai");
+          const ai = new GoogleGenAI({ apiKey: GeminiApiKey });
+          const result = await ai.models.generateContent({
+            model: modelToUse,
+            contents: "Test prompt",
+          });
+          const responseText = result.text;
           if (responseText.length > 0) {
             validationResults.gemini = true;
           } else {
@@ -1588,7 +1328,7 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
 
     // If a username is provided, this is a health check. Get the token from the DB.
     if (traktUsername) {
-      const tokenData = await getTokens(traktUsername);
+      const tokenData = getTokens(traktUsername);
       if (tokenData && tokenData.access_token) {
         tokenToCheck = tokenData.access_token;
       } else {
@@ -1602,14 +1342,15 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
     if (tokenToCheck) {
       validations.push((async () => {
         try {
-          const traktResponse = await fetch(`${TRAKT_API_BASE}/users/me`, {
-            headers: {
-              "Content-Type": "application/json",
-              "trakt-api-version": "2",
-              "trakt-api-key": TRAKT_CLIENT_ID,
-              Authorization: `Bearer ${tokenToCheck}`,
-            },
-          });
+           const traktResponse = await fetch(`${TRAKT_API_BASE}/users/me`, {
+             headers: {
+               "Content-Type": "application/json",
+               "User-Agent": "stremio-ai-search",
+               "trakt-api-version": "2",
+               "trakt-api-key": TRAKT_CLIENT_ID,
+               Authorization: `Bearer ${tokenToCheck}`,
+             },
+           });
           if (!traktResponse.ok) {
             validationResults.trakt = false;
             validationResults.errors.trakt = "Trakt.tv connection is invalid. Please re-login.";
@@ -1724,29 +1465,6 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
       }
     );
 
-    app.listen(PORT, "0.0.0.0", () => {
-      if (ENABLE_LOGGING) {
-        logger.info("Server started", {
-          environment: "production",
-          port: PORT,
-          urls: {
-            base: HOST,
-            manifest: `${HOST}${BASE_PATH}/manifest.json`,
-            configure: `${HOST}${BASE_PATH}/configure`,
-          },
-          addon: {
-            id: setupManifest.id,
-            version: setupManifest.version,
-            name: setupManifest.name,
-          },
-          static: {
-            publicDir: path.join(__dirname, "public"),
-            logo: setupManifest.logo,
-            background: setupManifest.background,
-          },
-        });
-      }
-    });
   } catch (error) {
     if (ENABLE_LOGGING) {
       logger.error("Server error:", {
@@ -1759,3 +1477,5 @@ app.post(["/validate", "/aisearch/validate"], express.json(), async (req, res) =
 }
 
 startServer();
+
+module.exports = app;

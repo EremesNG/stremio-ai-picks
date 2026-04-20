@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "last_run": "2026-04-19T19:47:02.195739Z",
+    "root": "C:\\DEV\\Proyectos\\Webstorm\\stremio-ai-search",
+    "include_patterns": [
+      "*.js",
+      "utils/**/*.js",
+      "package.json",
+      "Dockerfile",
+      "*.html",
+      "public/*.html"
+    ],
+    "exclude_patterns": [
+      "node_modules/**",
+      "dist/**",
+      "*.test.js",
+      "*.spec.js",
+      "**/*.min.js"
+    ],
+    "exceptions": []
+  },
+  "file_hashes": {
+    "addon.js": "3c1504c441f400592cc54712b077b226",
+    "database.js": "1280825a37469468eaaaa2894447ad39",
+    "Dockerfile": "25a32c0d112900bd4eb28b3e3caefd41",
+    "ecosystem.config.js": "235ca3878a0feda10fef25db792e2920",
+    "package.json": "86d0bd13760b3272bdb39ff03445fe43",
+    "public\\configure.html": "da2cbb43c3c36af63f26f90125d48726",
+    "server.js": "d7955f6b4ff88c6bc9a00be8716ae33c",
+    "utils\\agent-tools.js": "2afd1d3c1afa8d9d67bbf28690e1c0b6",
+    "utils\\agent.js": "664beac52c88d97d0e8303c6e19454d7",
+    "utils\\apiRetry.js": "7ebf13923c199834b1d6b77b64b9b185",
+    "utils\\crypto.js": "0796559296afec12206a9f4ab793dc53",
+    "utils\\issueHandler.js": "4a5bc5961e7941c154b573935e891bf7",
+    "utils\\logger.js": "a21eae28915fc109d4f0c0371522dc28",
+    "utils\\prompts.js": "d8b7a79be5b167566c4485468e14e986",
+    "utils\\trakt.js": "27801e64576efe31a32ec70b7e00110d"
+  },
+  "folder_hashes": {
+    "public": "",
+    "utils": "",
+    ".": "2e9e348948381b2bc19ff3b677e2b59e"
+  }
+}

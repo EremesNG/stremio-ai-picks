@@ -162,6 +162,25 @@ const logger = {
       () => {} // Silent error handling
     );
   },
+  agent: function (label, data) {
+    if (ENABLE_LOGGING) {
+      const timestamp = new Date().toISOString();
+      let formattedData;
+      try {
+        formattedData = JSON.stringify(data, null, 2);
+      } catch (err) {
+        formattedData = `[unserializable: ${typeof data}]`;
+      }
+      const logMessage = `[${timestamp}] [AGENT] [${label}]: ${formattedData}\n---\n`;
+
+      // Write to agent log file
+      fs.appendFile(
+        path.join(logsDir, "agent.log"),
+        logMessage,
+        () => {} // Silent error handling
+      );
+    }
+  },
   ENABLE_LOGGING,
 };
 
