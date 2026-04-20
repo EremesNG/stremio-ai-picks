@@ -7,6 +7,7 @@
     <meta name="description" content="Configure your Stremio AI Picks addon settings, API keys, and preferences.">
     <meta name="robots" content="noindex, nofollow">
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -694,7 +695,7 @@
             <div class="action-bar backdrop-blur-xl bg-void/80 border-t border-white/10 p-6 sticky bottom-0 z-40 w-full mt-8 rounded-t-3xl">
                 <div id="error" class="hidden mb-4 p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm text-center"></div>
                 
-                <div class="mx-auto flex w-full max-w-5xl justify-center">
+                <div class="mx-auto flex w-full max-w-5xl justify-center items-center gap-4">
                     <button id="installBtn" type="button" class="btn-primary inline-flex w-full max-w-md items-center justify-center gap-3" onclick="openInstallFlow(event)" disabled>
                         <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -703,15 +704,14 @@
                         </svg>
                         <span>Install</span>
                     </button>
+                    <a href="https://buymeacoffee.com/eremesng" target="_blank" class="transform hover:scale-110 transition-transform shrink-0" title="Support the project">
+                        <img src="bmc.png" alt="Buy me a coffee" class="h-10 w-auto" />
+                    </a>
                 </div>
             </div>
 
             <!-- Footer Links -->
             <div class="flex flex-col items-center gap-4 mt-12 pb-24">
-                <a href="https://buymeacoffee.com/eremesng" target="_blank" class="transform hover:scale-105 transition-transform">
-                    <img src="bmc.png" alt="Buy me a coffee" class="h-10 w-auto" />
-                </a>
-
                 <button id="submitIssueBtn" class="text-sm text-gray-500 hover:text-cyan-400 transition-colors" onclick="event.preventDefault(); openIssueModal()">
                     Submit Issue / Ideas
                 </button>
@@ -854,6 +854,12 @@
                     <div class="relative">
                         <input type="text" id="manifestUrlDisplay" readonly class="w-full rounded-xl border border-white/10 bg-white/5 pr-16 font-mono text-xs text-white sm:text-sm" value="" />
                     </div>
+                </div>
+
+                <div class="flex justify-center pt-2">
+                    <a href="https://buymeacoffee.com/eremesng" target="_blank" class="transform hover:scale-110 transition-transform" title="Support the project">
+                        <img src="bmc.png" alt="Buy me a coffee" class="h-8 w-auto opacity-70 hover:opacity-100 transition-opacity" />
+                    </a>
                 </div>
             </div>
         </div>
