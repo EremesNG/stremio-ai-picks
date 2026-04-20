@@ -19,7 +19,7 @@ async function initDb() {
 }
 
 async function storeTokens(username, accessToken, refreshToken, expiresIn) {
-  const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+  const expiresAt = Math.floor(Date.now() / 1000) + Number(expiresIn);
 
   try {
     await db.execute({
