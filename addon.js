@@ -3599,7 +3599,7 @@ const catalogHandler = async function (args, req) {
         }
 
         // Increment counter for successful cached results
-        if (finalMetas.length > 0 && isSearchRequest) {
+        if (finalMetas.length > 0) {
           incrementQueryCounter(finalMetas.length);
           logger.info(
             "Query counter incremented for successful cached search",
@@ -4300,7 +4300,7 @@ const catalogHandler = async function (args, req) {
       }
 
       // Only increment the counter if we're returning non-empty results
-      if (finalMetas.length > 0 && isSearchRequest) {
+      if (finalMetas.length > 0) {
         incrementQueryCounter(finalMetas.length);
         logger.info("Query counter incremented for successful search", {
           searchQuery,
@@ -4567,6 +4567,9 @@ const metaHandler = async function (args) {
           timestamp: Date.now(),
           data: meta
         });
+
+        // Increment counter for successful similar content recommendations
+        incrementQueryCounter(videos.length);
 
         logger.info(`Successfully generated ${videos.length} recommendations.`, { 
           source: sourceTitle, 
