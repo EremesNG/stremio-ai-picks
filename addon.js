@@ -8,6 +8,7 @@ const { runAgentLoop } = require("./utils/agent");
 const { toolDeclarations, executeTools: executeAgentTools } = require("./utils/agent-tools");
 const { fetchTraktFavorites, normalizeMediaKey } = require("./utils/trakt");
 const { buildLinearPrompt } = require("./utils/prompts");
+const { getStatValue, incrementStat, setStatValue } = require("./database");
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
 const TMDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB
 const TMDB_DISCOVER_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB discover (was 12 hours)
@@ -28,6 +29,18 @@ const TRAKT_PAGINATION_CONCURRENCY = 4;
 
 // Stats counter for tracking total queries
 let queryCounter = 0;
+
+async function hydrateQueryCounter() {
+  try {
+    const dbValue = await getStatValue('recommendations_served');
+    if (dbValue > queryCounter) {
+      queryCounter = dbValue;
+      logger.info('Query counter hydrated from database', { count: queryCounter });
+    }
+  } catch (error) {
+    logger.error('Failed to hydrate query counter from database', { error: error.message });
+  }
+}
 
 class SimpleLRUCache {
   constructor(options = {}) {
@@ -2886,9 +2899,12 @@ function filterTraktDataByGenres(traktData, genres) {
 }
 
 // Function to increment and get the query counter
-function incrementQueryCounter() {
-  queryCounter++;
-  logger.info("Query counter incremented", { totalQueries: queryCounter });
+function incrementQueryCounter(amount = 1) {
+  queryCounter += amount;
+  logger.info("Query counter incremented", { added: amount, totalQueries: queryCounter });
+  incrementStat('recommendations_served', amount).catch(err => {
+    logger.error('Failed to persist counter increment', { error: err.message });
+  });
   return queryCounter;
 }
 
@@ -2898,15 +2914,10 @@ function getQueryCount() {
 }
 
 // Function to set the query counter to a specific value
-function setQueryCount(newCount) {
-  if (typeof newCount !== "number" || newCount < 0) {
-    throw new Error("Query count must be a non-negative number");
-  }
-  const oldCount = queryCounter;
-  queryCounter = newCount;
-  logger.info("Query counter manually set", {
-    oldCount,
-    newCount: queryCounter,
+function setQueryCount(count) {
+  queryCounter = count;
+  setStatValue('recommendations_served', count).catch(err => {
+    logger.error('Failed to persist counter set', { error: err.message });
   });
   return queryCounter;
 }
@@ -3607,7 +3618,7 @@ const catalogHandler = async function (args, req) {
 
         // Increment counter for successful cached results
         if (finalMetas.length > 0 && isSearchRequest) {
-          incrementQueryCounter();
+          incrementQueryCounter(finalMetas.length);
           logger.info(
             "Query counter incremented for successful cached search",
             {
@@ -4518,7 +4529,7 @@ const catalogHandler = async function (args, req) {
 
       // Only increment the counter if we're returning non-empty results
       if (finalMetas.length > 0 && isSearchRequest) {
-        incrementQueryCounter();
+        incrementQueryCounter(finalMetas.length);
         logger.info("Query counter incremented for successful search", {
           searchQuery,
           resultCount: finalMetas.length,
@@ -4860,6 +4871,7 @@ module.exports = {
   getCacheStats,
   serializeAllCaches,
   deserializeAllCaches,
+  hydrateQueryCounter,
   discoverTypeAndGenres,
   filterTraktDataByGenres,
   incrementQueryCounter,
