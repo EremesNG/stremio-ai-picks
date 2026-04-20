@@ -1,1198 +1,948 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>AI Picks Addon Configuration</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configure — Stremio AI Picks</title>
+    <meta name="description" content="Configure your Stremio AI Picks addon settings, API keys, and preferences.">
+    <meta name="robots" content="noindex, nofollow">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Space Grotesk', 'sans-serif'],
+                        display: ['Bricolage Grotesque', 'sans-serif'],
+                    },
+                    colors: {
+                        void: '#030712',
+                        cyan: {
+                            400: '#22d3ee',
+                            500: '#06b6d4',
+                        },
+                        blue: {
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                        }
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-out',
+                        'slide-up': 'slideUp 0.5s ease-out',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-      :root {
-        --primary-color: #ced4da;
-      }
-
-      body {
-        font-family: Arial, sans-serif;
-        max-width: 800px;
-        margin: 20px auto;
-        padding: 20px;
-        background: #141414;
-        color: #d9d9d9;
-      }
-      .container {
-        background: #1f1f1f;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-      }
-      h1 {
-        color: var(--primary-color);
-        margin-bottom: 20px;
-        text-align: center;
-      }
-      .form-group {
-        margin-bottom: 20px;
-        margin-left: 20px;
-        margin-right: 20px;
-      }
-      .form-label {
-        display: block;
-        margin-bottom: 8px;
-        color: var(--primary-color);
-        font-size: 14px;
-      }
-      input[type="text"],
-      input[type="number"],
-      input[type="password"],
-      input[type="email"] {
-        width: calc(100% - 16px);
-        padding: 8px;
-        border: 1px solid #333;
-        border-radius: 4px;
-        background: #2a2a2a;
-        color: #fff;
-        -webkit-appearance: none;
-        appearance: none;
-      }
-      input[type="text"]:focus,
-      input[type="number"]:focus,
-      input[type="password"]:focus,
-      input[type="email"]:focus {
-        outline: 1px solid #495057;
-        background: #2a2a2a;
-      }
-      input[type="text"]:not(:placeholder-shown),
-      input[type="number"]:not(:placeholder-shown),
-      input[type="password"]:not(:placeholder-shown),
-      input[type="email"]:not(:placeholder-shown) {
-        background: #2a2a2a;
-      }
-      /* Override browser autofill styling */
-      input:-webkit-autofill,
-      input:-webkit-autofill:hover,
-      input:-webkit-autofill:focus,
-      input:-webkit-autofill:active {
-        -webkit-box-shadow: 0 0 0 30px #2a2a2a inset !important;
-        -webkit-text-fill-color: #fff !important;
-        transition: background-color 5000s ease-in-out 0s;
-      }
-      input:-internal-autofill-selected {
-        appearance: none !important;
-        background-image: none !important;
-        background-color: #2a2a2a !important;
-        color: #fff !important;
-      }
-      /* Remove spinner buttons from number input */
-      input[type="number"]::-webkit-inner-spin-button,
-      input[type="number"]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-      input[type="number"] {
-        -moz-appearance: textfield; /* Firefox */
-      }
-      /* Mobile optimizations */
-      @media (max-width: 600px) {
         body {
-          padding: 10px;
-          margin: 10px;
+            background-color: #030712;
+            color: #f8fafc;
         }
-
-        .container {
-          padding: 15px;
+        
+        /* Form Element Styles */
+        .form-input {
+            @apply w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200;
         }
-
-        .form-group {
-          margin-left: 10px;
-          margin-right: 10px;
-        }
-
-        .logo {
-          width: 80px;
-          height: 80px;
-          padding: 15px;
-        }
-
-        .button-group {
-          flex-direction: column;
-          gap: 10px;
-        }
-
-        .button-group button {
-          width: 100%;
-          margin: 0;
-          padding: 12px;
-          font-size: 16px;
-        }
-
-        input[type="text"],
-        input[type="number"],
-        input[type="password"],
-        select.form-select {
-          font-size: 16px;
-          padding: 12px 8px;
-          height: 48px; /* Larger touch target */
-        }
-
-        .advanced-section {
-          margin: 15px 10px;
-          padding: 10px;
-        }
-
-        .manual-url {
-          margin: 15px 10px;
-          font-size: 11px;
-          word-break: break-all;
-        }
-
-        .error {
-          margin: 15px auto;
-          font-size: 14px;
-          padding: 10px 15px;
-          max-width: 90%;
-        }
-
-        .help-text {
-          font-size: 11px;
-          line-height: 1.4;
-        }
-
-        h1 {
-          font-size: 24px;
-          margin: 15px 0;
-        }
-
+        
         .form-label {
-          font-size: 16px;
-          margin-bottom: 6px;
+            @apply block text-sm font-medium text-white/70 mb-2;
+        }
+        
+        .help-text {
+            @apply text-xs text-white/40 mt-1 leading-relaxed;
+        }
+        
+        .help-text a {
+            @apply text-cyan-400 hover:text-cyan-300 underline decoration-cyan-400/30 hover:decoration-cyan-300 transition-colors;
+        }
+        
+        .required {
+            @apply text-red-500 ml-1;
         }
 
-        footer {
-          font-size: 12px;
-          padding: 15px;
-        }
-
-        .bmc-button {
-          margin: 15px 0;
-        }
-
-        .bmc-button img {
-          height: 32px;
-        }
-
-        .copy-feedback {
-          font-size: 14px;
-          padding: 10px 20px;
-          border-radius: 20px;
-        }
-
-        /* Improve checkbox and radio touch targets */
-        input[type="checkbox"] {
-          width: 20px;
-          height: 20px;
-        }
-
-        /* Adjust spacing for better touch targets */
+        /* Checkbox Styles */
         .checkbox-container {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          margin: 10px 0;
+            @apply flex items-center gap-3 cursor-pointer group min-h-[44px];
+        }
+        
+        .checkbox-container input[type="checkbox"] {
+            @apply w-6 h-6 rounded border-white/10 bg-white/5 text-cyan-500 focus:ring-cyan-500/50 focus:ring-offset-0 cursor-pointer transition-all duration-200;
+        }
+        
+        .checkbox-container label {
+            @apply text-sm font-medium text-white/70 group-hover:text-white transition-colors cursor-pointer select-none;
         }
 
-        /* Make the Trakt.tv button more touch-friendly */
-        .secondary-button {
-          padding: 12px;
-          font-size: 16px;
-          height: 48px;
-        }
-      }
-
-      /* Add styles for medium-sized screens */
-      @media (min-width: 601px) and (max-width: 1024px) {
-        body {
-          padding: 15px;
-          margin: 15px auto;
-        }
-
-        .container {
-          padding: 20px;
-        }
-
-        .button-group button {
-          padding: 12px;
-        }
-      }
-      button {
-        display: inline-block;
-        margin: 0 10px;
-        width: calc(50% - 25px);
-        background: var(--primary-color);
-        font-weight: bold;
-        color: #1f1f1f;
-        border: 1px solid #aaa;
-        padding: 10px 20px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background-color 0.2s ease, border-color 0.2s ease,
-          transform 0.1s ease;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-      }
-      button:hover {
-        background: #b4bac0;
-        border-color: #999;
-        transform: translateY(-1px);
-      }
-      button:disabled {
-        background: #555;
-        color: #999;
-        cursor: not-allowed;
-        border-color: #666;
-        transform: none;
-        box-shadow: none;
-      }
-      .instructions {
-        font-size: small;
-        margin-top: 15px;
-        border-radius: 4px;
-        text-align: center;
-      }
-      .error {
-        color: #fff;
-        margin: 20px auto;
-        display: none;
-        background-color: rgba(255, 68, 68, 0.1);
-        border: 1px solid rgba(255, 68, 68, 0.3);
-        padding: 12px 20px;
-        border-radius: 8px;
-        text-align: center;
-        max-width: 80%;
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
-      }
-      a {
-        color: var(--primary-color);
-        text-decoration: underline;
-      }
-      .bmc-button {
-        display: block;
-        text-align: center;
-        margin: 20px 0;
-      }
-      .bmc-button img {
-        height: 40px;
-        width: auto;
-      }
-      footer {
-        text-align: center;
-        padding: 20px;
-        color: #888;
-        font-size: 0.9em;
-      }
-      .github-icon {
-        height: 20px;
-        width: 20px;
-        vertical-align: middle;
-        margin-left: 5px;
-        fill: currentColor;
-      }
-      .github-link:hover {
-        color: var(--primary-color);
-      }
-      .github-link:hover .github-icon {
-        fill: var(--primary-color);
-      }
-      .heart {
-        color: #ff4444;
-        font-size: 1.5em;
-      }
-      .required {
-        color: #ff4444;
-        margin-left: 2px;
-      }
-      .logo {
-        width: 120px;
-        height: 120px;
-        margin: 0 auto 20px;
-        display: block;
-        background: #2a2a2a;
-        border-radius: 20px;
-        padding: 20px;
-      }
-      .button-group {
-        display: flex;
-        justify-content: center;
-        margin: 20px;
-      }
-      .manual-url {
-        margin: 20px;
-        padding: 10px;
-        background: #2a2a2a;
-        border-radius: 4px;
-        word-break: break-all;
-        font-family: monospace;
-        font-size: 12px;
-        display: none;
-        color: #888;
-      }
-      .copy-feedback {
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(255, 255, 255, 0.9);
-        color: #333;
-        padding: 8px 16px;
-        border-radius: 4px;
-        display: none;
-        animation: fadeInOut 2s ease-in-out;
-      }
-      @keyframes fadeInOut {
-        0% {
-          opacity: 0;
-        }
-        20% {
-          opacity: 1;
-        }
-        80% {
-          opacity: 1;
-        }
-        100% {
-          opacity: 0;
-        }
-      }
-      select.form-select {
-        width: 100%;
-        padding: 8px;
-        border: 1px solid #333;
-        border-radius: 4px;
-        background: #2a2a2a;
-        color: #fff;
-        -webkit-appearance: none;
-        appearance: none;
-        background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
-        background-repeat: no-repeat;
-        background-position: right 8px center;
-        background-size: 12px;
-        padding-right: 24px;
-      }
-      select.form-select:focus {
-        outline: 1px solid #495057;
-      }
-      @media (max-width: 600px) {
+        /* Select Styles */
         select.form-select {
-          font-size: 16px;
-          padding: 10px 8px;
-          padding-right: 24px;
+            @apply w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200 appearance-none cursor-pointer;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23ffffff' stroke-opacity='0.5' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+            background-position: right 1rem center;
+            background-repeat: no-repeat;
+            background-size: 1.5em 1.5em;
+            padding-right: 2.5rem;
         }
-      }
-      /* Add these CSS rules to improve styling */
-      .advanced-section {
-        border: 1px solid #333;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 20px 30px; /* Add horizontal margin to make it smaller */
-        background-color: #252525;
-        display: none; /* Hidden by default */
-      }
-      .help-text {
-        font-size: 12px;
-        color: #aaa;
-        margin-top: 4px;
-      }
-      .help-text a {
-        color: #6c9fff;
-        text-decoration: none;
-      }
-      .help-text a:hover {
-        text-decoration: underline;
-      }
-      .secondary-button {
-        background: #2a2a2a;
-        color: var(--primary-color);
-        border: 1px solid var(--primary-color);
-        padding: 8px 16px;
-        border-radius: 4px;
-        cursor: pointer;
-        width: 100%;
-        margin-top: 5px;
-      }
-      .secondary-button:hover {
-        background: #333;
-      }
-      .submit-issue-button {
-        display: block;
-        width: fit-content;
-        margin: 20px auto;
-        padding: 5px 10px;
-        background: none;
-        color: #aaa;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-        text-decoration: none;
-        transition: color 0.2s ease;
-      }
-      .submit-issue-button:hover {
-        color: var(--primary-color);
-        text-decoration: underline;
-        background: none;
-        transform: none;
-      }
-      .modal {
-        display: none;
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.7);
-        backdrop-filter: blur(4px);
-        z-index: 1000;
-      }
-      .modal-content {
-        position: relative;
-        background: #1f1f1f;
-        margin: 5% auto;
-        padding: 20px;
-        border-radius: 8px;
-        max-width: 600px;
-        width: 90%;
-        max-height: 90vh;
-        overflow-y: auto;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-      }
-      .close-modal {
-        position: absolute;
-        right: 20px;
-        top: 15px;
-        font-size: 24px;
-        color: var(--primary-color);
-        cursor: pointer;
-      }
-      .close-modal:hover {
-        color: #fff;
-      }
-      .form-textarea {
-        width: calc(100% - 16px);
-        padding: 8px;
-        border: 1px solid #333;
-        border-radius: 4px;
-        background: #2a2a2a;
-        color: #fff;
-        font-family: inherit;
-        resize: vertical;
-      }
-      .form-textarea:focus {
-        outline: 1px solid #495057;
-      }
-      .submit-button {
-        width: auto;
-        min-width: 200px;
-        padding: 12px 24px;
-        background: var(--primary-color);
-        color: #1f1f1f;
-        border: none;
-        border-radius: 4px;
-        font-weight: bold;
-        cursor: pointer;
-        margin: 20px auto;
-        display: block;
-      }
-      .submit-button:hover {
-        background: #b4bac0;
-      }
-      /* Mobile optimizations for modal */
-      @media (max-width: 600px) {
-        .modal-content {
-          margin: 10% auto;
-          width: 95%;
-          padding: 15px;
+        
+        select.form-select option {
+            @apply bg-void text-white;
         }
-        .form-textarea {
-          font-size: 16px;
+
+        /* Button Styles */
+        .btn-primary {
+            @apply w-full sm:w-auto px-6 py-3 bg-cyan-400 hover:bg-cyan-500 text-void font-semibold rounded-lg shadow-lg shadow-cyan-400/25 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none transform hover:-translate-y-0.5;
         }
-      }
-      .feedback-container {
-        display: none;
-        margin: 20px;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-      }
-      .feedback-success {
-        background-color: rgba(40, 167, 69, 0.1);
-        border: 1px solid rgba(40, 167, 69, 0.3);
-        color: #2ecc71;
-      }
-      .feedback-error {
-        background-color: rgba(255, 68, 68, 0.1);
-        border: 1px solid rgba(255, 68, 68, 0.3);
-        color: #ff4444;
-      }
-      .catalog-row {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 10px;
-        align-items: center;
-      }
-      .catalog-row input[type="text"] {
-        margin: 0;
-        width: 100%;
-      }
-      .catalog-title {
-        flex: 3;
-      }
-      .catalog-query {
-        flex: 6;
-      }
-      .catalog-remove {
-        flex: 1;
-        background: #ff4444;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        height: 34px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        padding: 0;
-        margin: 0;
-        min-width: 34px;
-        width: auto;
-      }
-      .catalog-remove:hover {
-        background: #cc0000;
-        transform: none;
-      }
+        
+        .btn-secondary {
+            @apply w-full sm:w-auto px-6 py-3 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5;
+        }
+
+        /* Section Cards */
+        .section-card {
+            @apply bg-white/[0.02] border border-white/[0.05] rounded-xl p-6 mb-6;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #030712;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
+
+        /* Autofill override */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus,
+        input:-webkit-autofill:active {
+            -webkit-box-shadow: 0 0 0 30px #030712 inset !important;
+            -webkit-text-fill-color: #fff !important;
+            transition: background-color 5000s ease-in-out 0s;
+        }
+
+        #copyManifestBtn svg {
+            width: 1rem !important;
+            height: 1rem !important;
+        }
+
+        /* Catalog Rows */
+        .catalog-row {
+            @apply flex flex-col sm:flex-row gap-3 mb-3 items-start sm:items-center animate-fade-in;
+        }
+        
+        .catalog-title {
+            @apply form-input sm:w-1/3;
+        }
+        
+        .catalog-query {
+            @apply form-input sm:w-7/12;
+        }
+        
+        .catalog-remove {
+            @apply w-full sm:w-auto px-4 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 rounded-lg transition-colors flex items-center justify-center;
+        }
+
+        @keyframes slideUpFade {
+            from { opacity: 0; transform: translate(-50%, 20px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+        }
+        
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
     </style>
-  </head>
-  <body>
-    <div class="container">
-      <img src="logo.png" alt="AI Picks" class="logo" />
-      <h1>Stremio AI Picks</h1>
+    <style>
+        :root { color-scheme: dark; }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            background:
+                radial-gradient(circle at top left, rgba(34, 211, 238, 0.14), transparent 28%),
+                radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 26%),
+                radial-gradient(circle at bottom center, rgba(14, 165, 233, 0.08), transparent 32%),
+                #030712;
+            overflow-x: hidden;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image: linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+            background-size: 100% 88px, 88px 100%;
+            mask-image: radial-gradient(circle at center, black 0%, transparent 84%);
+            opacity: 0.22;
+        }
+        body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(180deg, rgba(3, 7, 18, 0.12), rgba(3, 7, 18, 0.58));
+        }
+        .page-shell,
+        main,
+        footer { position: relative; z-index: 1; }
+        .hero-panel,
+        .section-card {
+            background: rgba(15, 23, 42, 0.56);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 1.5rem;
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
+        }
+        .hero-panel { padding: 1.75rem; overflow: hidden; }
+        .section-card { padding: 1.5rem; transition: border-color 200ms ease, transform 200ms ease, background-color 200ms ease; }
+        .section-card:hover { border-color: rgba(255, 255, 255, 0.12); }
+        .section-card--muted { background: rgba(15, 23, 42, 0.42); }
+        .hero-kicker,
+        .section-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: rgba(34, 211, 238, 0.82);
+        }
+        .hero-title {
+            margin: 0;
+            font-family: 'Bricolage Grotesque', sans-serif;
+            font-size: clamp(2.4rem, 4.5vw, 4.25rem);
+            line-height: 0.95;
+            letter-spacing: -0.04em;
+            color: #fff;
+        }
+        .hero-subtitle {
+            margin: 0;
+            max-width: 58ch;
+            font-size: 1rem;
+            line-height: 1.7;
+            color: rgba(226, 232, 240, 0.72);
+        }
+        .hero-panel h2,
+        .hero-panel h3,
+        .section-card h2,
+        .section-card h3 {
+            font-family: 'Bricolage Grotesque', sans-serif;
+            letter-spacing: -0.03em;
+        }
+        .section-divider { height: 1px; margin: 1rem 0; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent); }
+        .form-group { width: 100%; }
+        .form-group > label:not(.toggle-label), .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.8125rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.58);
+        }
+        .required { color: #22d3ee; margin-left: 0.2rem; }
+        .help-text {
+            margin-top: 0.65rem;
+            font-size: 0.8125rem;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.34);
+        }
+        .help-text a {
+            color: #22d3ee;
+            text-decoration: underline;
+            text-decoration-color: rgba(34, 211, 238, 0.3);
+            text-underline-offset: 0.18em;
+            transition: color 200ms ease, text-decoration-color 200ms ease;
+        }
+        .help-text a:hover { color: #67e8f9; text-decoration-color: rgba(103, 232, 249, 0.55); }
+        .config-shell input[type="text"], .config-shell input[type="password"], .config-shell input[type="number"], .config-shell select, .config-shell textarea {
+            width: 100%; min-height: 48px; border-radius: 0.875rem; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.04); color: #fff; font-size: 15px; line-height: 1.5; padding: 0.875rem 1rem; outline: none; transition: all 200ms ease; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+        .config-shell input[type="text"]::placeholder, .config-shell input[type="password"]::placeholder, .config-shell input[type="number"]::placeholder, .config-shell textarea::placeholder { color: rgba(255, 255, 255, 0.25); }
+        .config-shell input[type="text"]:hover, .config-shell input[type="password"]:hover, .config-shell input[type="number"]:hover, .config-shell select:hover, .config-shell textarea:hover { border-color: rgba(255, 255, 255, 0.15); }
+        .config-shell input[type="text"]:focus, .config-shell input[type="password"]:focus, .config-shell input[type="number"]:focus, .config-shell select:focus, .config-shell textarea:focus { border-color: rgba(34, 211, 238, 0.6); background: rgba(255, 255, 255, 0.06); box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.24), 0 10px 24px rgba(0, 0, 0, 0.18); }
+        .config-shell select { cursor: pointer; padding-right: 2.75rem; appearance: none; background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23ffffff' stroke-opacity='0.55' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 0.9rem center; background-size: 1.25rem 1.25rem; }
+        .config-shell select option { background: #0f172a; color: #fff; }
+        .config-shell input[type="number"] { appearance: textfield; }
+        .config-shell input[type="number"]::-webkit-outer-spin-button, .config-shell input[type="number"]::-webkit-inner-spin-button { margin: 0; appearance: none; }
+        .toggle-label {
+            display: flex; align-items: flex-start; gap: 0.9rem; width: 100%; min-height: 44px; padding: 1rem; border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.06); background: rgba(255, 255, 255, 0.03); cursor: pointer; transition: border-color 200ms ease, background-color 200ms ease, transform 200ms ease;
+        }
+        .toggle-label:hover { border-color: rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.045); }
+        .toggle-label input { position: absolute; opacity: 0; pointer-events: none; }
+        .toggle-track { position: relative; flex: 0 0 auto; width: 2.75rem; height: 1.5rem; border-radius: 9999px; background: rgba(255, 255, 255, 0.08); transition: background-color 200ms ease; margin-top: 0.1rem; }
+        .toggle-track::after { content: ""; position: absolute; top: 0.125rem; left: 0.125rem; width: 1.25rem; height: 1.25rem; border-radius: 9999px; background: #fff; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32); transition: transform 200ms ease; }
+        .toggle-label .peer:checked + .toggle-track, .toggle-label input:checked + .toggle-track { background: linear-gradient(135deg, #22d3ee, #2563eb); }
+        .toggle-label .peer:checked + .toggle-track::after, .toggle-label input:checked + .toggle-track::after { transform: translateX(1.25rem); }
+        .toggle-content { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+        .toggle-title { font-size: 0.95rem; font-weight: 600; color: #fff; line-height: 1.35; }
+        .toggle-subtitle { font-size: 0.8125rem; line-height: 1.55; color: rgba(255, 255, 255, 0.34); }
+        .advanced-toggle { justify-content: center; text-align: center; padding-inline: 1.25rem; }
+        .advanced-toggle .toggle-content { align-items: center; }
+        .advanced-toggle .toggle-title { text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.8rem; }
+        .btn-primary, .btn-secondary, #traktAuthBtn, .submit-button, .catalog-remove, #submitIssueBtn { transition: transform 200ms ease, background-color 200ms ease, border-color 200ms ease, opacity 200ms ease, box-shadow 200ms ease; }
+        .btn-primary, #installBtn, #traktAuthBtn, .submit-button { border-radius: 1rem; min-height: 48px; font-weight: 700; }
+        #installBtn { background: linear-gradient(135deg, #22d3ee, #2563eb); color: #030712; box-shadow: 0 16px 32px rgba(6, 182, 212, 0.22); }
+        #installBtn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 20px 40px rgba(6, 182, 212, 0.28); }
+        .btn-secondary, #submitIssueBtn { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); color: #fff; }
+        .btn-secondary:hover:not(:disabled), #submitIssueBtn:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.12); transform: translateY(-1px); }
+        #traktAuthBtn { background: #9f42c6; color: #fff; box-shadow: 0 16px 32px rgba(159, 66, 198, 0.22); }
+        #traktAuthBtn:hover:not(:disabled) { background: #8a37ad; transform: translateY(-1px); }
+        .catalog-row { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.65fr) auto; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; padding: 0.85rem; border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.06); background: rgba(255, 255, 255, 0.025); }
+        .catalog-remove { width: 100%; min-width: 48px; min-height: 48px; border-radius: 0.875rem; display: inline-flex; align-items: center; justify-content: center; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.18); color: #f87171; }
+        .catalog-remove:hover { background: rgba(239, 68, 68, 0.16); border-color: rgba(239, 68, 68, 0.28); color: #fca5a5; transform: translateY(-1px); }
+        .action-bar { background: linear-gradient(180deg, rgba(3, 7, 18, 0.08), rgba(3, 7, 18, 0.88) 32%); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); }
+        .modal-content { position: relative; width: min(92vw, 640px); max-height: calc(100vh - 2rem); margin: 1rem auto; overflow-y: auto; border-radius: 1.5rem; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(15, 23, 42, 0.98); box-shadow: 0 32px 80px rgba(0, 0, 0, 0.45); }
+        .config-shell .hidden { display: none !important; }
+        input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, input:-webkit-autofill:active { -webkit-box-shadow: 0 0 0 30px #030712 inset !important; -webkit-text-fill-color: #fff !important; transition: background-color 5000s ease-in-out 0s; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #030712; }
+        ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.24); border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.36); }
+        @media (max-width: 640px) {
+            .section-card, .hero-panel, .modal-content { border-radius: 1.25rem; }
+            .catalog-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col page-shell">
 
-       <div style="text-align: center; margin-bottom: 20px">
-          <img
-            src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FEremesNG%2Fstremio-ai-picks%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue"
-            alt="Stremio AI Picks Queries"
-          />
-       </div>
-
-      <form id="configForm">
-        <!-- Basic Configuration (Always Visible) -->
-        <div class="form-group">
-          <label class="form-label" for="geminiKey"
-            >Gemini API Key <span class="required">*</span></label
-          >
-          <input
-            type="password"
-            id="geminiKey"
-            placeholder="Enter your key from Google AI Studio"
-          />
-          <div class="help-text">
-            Get a free key from
-            <a href="https://makersuite.google.com/app/apikey" target="_blank"
-              >Google AI Studio</a
-            >
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="tmdbKey"
-            >TMDB API Key <span class="required">*</span></label
-          >
-          <input
-            type="password"
-            id="tmdbKey"
-            placeholder="Enter your TMDB API key"
-          />
-          <div class="help-text">
-            Get a free key from
-            <a href="https://www.themoviedb.org/settings/api" target="_blank"
-              >TMDB</a
-            >
-          </div>
-        </div>
-
-        <!-- Advanced Options Toggle -->
-        <div class="form-group">
-          <div class="checkbox-container">
-            <input type="checkbox" id="showAdvancedOptions" />
-            <label for="showAdvancedOptions">Show Advanced Options</label>
-          </div>
-        </div>
-
-        <!-- Advanced Configuration (Hidden by Default) -->
-        <div id="advancedOptions" class="advanced-section">
-          <div class="form-group">
-            <div class="checkbox-container">
-              <input type="checkbox" id="enableAiCache" checked />
-              <label for="enableAiCache">Enable AI Response Caching</label>
-              <span
-                class="info-tooltip"
-                title="Caching improves performance by reusing previous AI responses for identical queries"
-                >ⓘ</span
-              >
-            </div>
-          </div>
-
-          <!-- Adult recommendations -->
-          <div class="form-group">
-            <div class="checkbox-container">
-              <input type="checkbox" id="includeAdult" />
-              <label for="includeAdult">Include Adult (18+) Content</label>
-            </div>
-            <div class="help-text">
-              If checked, search results may include adult-rated content from TMDB.
-            </div>
-          </div>
-
-          <!-- Enable Similar Recommendations -->
-          <div class="form-group">
-            <div class="checkbox-container">
-              <input type="checkbox" id="enableSimilar" checked />
-              <label for="enableSimilar">Enable 'Similar' Recommendations</label>
-            </div>
-            <div class="help-text">
-              Shows a "Similar movies and shows" link on content detail pages.
-            </div>
-          </div>
-
-          <!-- Disable homepage AI recommendations -->
-          <div class="form-group">
-            <div class="checkbox-container">
-              <input type="checkbox" id="enableHomepage" checked />
-              <label for="enableHomepage">Show AI Recommendations on Homepage</label>
-            </div>
-            <div class="help-text">
-              If disabled, the AI recommendation catalogs will not appear on
-              your Stremio homepage.
-            </div>
-          </div>
-
-          <!-- Custom Homepage Query Input - Initially Hidden -->
-          <div class="form-group" id="homepageQueryGroup" style="display: none;">
-              <label class="form-label">Custom Homepage Catalogs (Optional)</label>
-              <div id="catalogRowsContainer">
-                <!-- Rows will be added here dynamically -->
-              </div>
-              <button type="button" class="secondary-button" onclick="addCatalogRow()" style="width: auto; margin-top: 10px; margin-left: 0;">+ Add Catalog</button>
-              <input type="hidden" id="homepageQuery" value="">
-              <div class="help-text">
-                  Add custom catalogs to your homepage. Each catalog needs a Title and an AI search query. e.g. Title: "Mystery", Query: "recommend mystery thrillers". To show only movies for a query, add the word "movies" to it (e.g., "thriller movies"). To use Trakt recommendations add 'Recommend' keyword in the query. For new content, use 'New' keyword.
-              </div>
-          </div>
-
-          <!-- Group all RPDB settings together -->
-          <div class="form-group">
-            <div class="checkbox-container">
-              <input type="checkbox" id="enableRpdbPosters" />
-              <label for="enableRpdbPosters"
-                >Enable High-Quality Posters (RPDB) with ratings</label
-              >
-            </div>
-            <div class="help-text">
-              Requires an RPDB API Key for personalized posters. If enabled
-              without a key, may use cached/default posters.
-            </div>
-          </div>
-
-          <!-- RPDB Key Input - Initially Hidden -->
-          <div class="form-group" id="rpdbKeyGroup" style="display: none">
-            <label class="form-label" for="rpdbKey">RPDB API Key</label>
-            <input
-              type="password"
-              id="rpdbKey"
-              placeholder="Optional: For high-quality posters"
-            />
-            <div class="help-text">
-              Get a key from
-              <a href="https://ratingposterdb.com/" target="_blank"
-                >Rating Poster DB</a
-              >
-            </div>
-          </div>
-
-          <!-- RPDB Poster Style Dropdown - Initially Hidden -->
-          <div
-            class="form-group"
-            id="rpdbPosterTypeGroup"
-            style="display: none"
-          >
-            <label class="form-label" for="rpdbPosterType"
-              >RPDB Poster Style</label
-            >
-            <select id="rpdbPosterType" class="form-select">
-              <option value="poster-default">Default</option>
-              <option value="poster-clean">Clean</option>
-              <option value="poster-imdb">IMDb Style</option>
-              <option value="poster-rt">Rotten Tomatoes Style</option>
-              <option value="poster-metacritic">Metacritic Style</option>
-            </select>
-          </div>
-
-          <!-- Fanart.tv API Key Input -->
-          <div class="form-group">
-            <label class="form-label" for="fanartKey">Fanart.tv API Key</label>
-            <input
-              type="password"
-              id="fanartKey"
-              placeholder="Optional: For high-quality landscape thumbnails in Similar recommendations"
-            />
-            <div class="help-text">
-              Get a free API key from
-              <a href="https://fanart.tv/get-an-api-key/" target="_blank"
-                >Fanart.tv</a
-              >. Used for displaying high-quality landscape thumbnails in the "Similar" recommendations feature, providing a better viewing experience.
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Trakt.tv Integration</label>
-            <button
-              id="traktAuthBtn"
-              class="secondary-button"
-              onclick="authenticateTrakt()"
-              style="margin-bottom: 10px"
-            >
-              Login with Trakt.tv
-            </button>
-            <input
-              type="hidden"
-              id="traktAccessToken"
-              placeholder="Will be automatically filled after authentication"
-            />
-            <input type="hidden" id="traktRefreshToken" />
-            <input type="hidden" id="traktUsername" />
-            <input type="hidden" id="traktExpiresIn" />
-            <div class="help-text">
-              Connect your Trakt.tv account to get personalized movie
-              recommendations based on your watch history and ratings.
-              <br />
-              <small
-                >Note: You'll need to re-authenticate every 90 days for security
-                reasons.</small
-              >
-            </div>
-          </div>
-
-          <!-- Filter Watched Items -->
-          <div class="form-group" id="filterWatchedGroup" style="display: none;">
-            <div class="checkbox-container">
-              <input type="checkbox" id="filterWatched" checked />
-              <label for="filterWatched">Filter out watched/rated items</label>
-            </div>
-            <div class="help-text">
-              When enabled, the AI agent will check your Trakt watch history to avoid recommending items you've already seen.
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="tmdbLanguage"
-              >Content Language</label
-            >
-            <select id="tmdbLanguage" class="form-select">
-              <option value="af-ZA">Afrikaans (South Africa)</option>
-              <option value="ar-AE">Arabic (UAE)</option>
-              <option value="ar-SA">Arabic (Saudi Arabia)</option>
-              <option value="be-BY">Belarusian (Belarus)</option>
-              <option value="bg-BG">Bulgarian (Bulgaria)</option>
-              <option value="bn-BD">Bengali (Bangladesh)</option>
-              <option value="ca-ES">Catalan (Spain)</option>
-              <option value="ch-GU">Chamorro (Guam)</option>
-              <option value="cs-CZ">Czech (Czech Republic)</option>
-              <option value="cy-GB">Welsh (United Kingdom)</option>
-              <option value="da-DK">Danish (Denmark)</option>
-              <option value="de-AT">German (Austria)</option>
-              <option value="de-CH">German (Switzerland)</option>
-              <option value="de-DE">German (Germany)</option>
-              <option value="el-GR">Greek (Greece)</option>
-              <option value="en-AU">English (Australia)</option>
-              <option value="en-CA">English (Canada)</option>
-              <option value="en-GB">English (United Kingdom)</option>
-              <option value="en-IE">English (Ireland)</option>
-              <option value="en-NZ">English (New Zealand)</option>
-              <option value="en-US" selected>English (United States)</option>
-              <option value="eo-EO">Esperanto</option>
-              <option value="es-ES">Spanish (Spain)</option>
-              <option value="es-MX">Spanish (Mexico)</option>
-              <option value="et-EE">Estonian (Estonia)</option>
-              <option value="eu-ES">Basque (Spain)</option>
-              <option value="fa-IR">Persian (Iran)</option>
-              <option value="fi-FI">Finnish (Finland)</option>
-              <option value="fr-CA">French (Canada)</option>
-              <option value="fr-FR">French (France)</option>
-              <option value="ga-IE">Irish (Ireland)</option>
-              <option value="gl-ES">Galician (Spain)</option>
-              <option value="he-IL">Hebrew (Israel)</option>
-              <option value="hi-IN">Hindi (India)</option>
-              <option value="hr-HR">Croatian (Croatia)</option>
-              <option value="hu-HU">Hungarian (Hungary)</option>
-              <option value="id-ID">Indonesian (Indonesia)</option>
-              <option value="is-IS">Icelandic (Iceland)</option>
-              <option value="it-IT">Italian (Italy)</option>
-              <option value="ja-JP">Japanese (Japan)</option>
-              <option value="ka-GE">Georgian (Georgia)</option>
-              <option value="kk-KZ">Kazakh (Kazakhstan)</option>
-              <option value="kn-IN">Kannada (India)</option>
-              <option value="ko-KR">Korean (South Korea)</option>
-              <option value="ky-KG">Kyrgyz (Kyrgyzstan)</option>
-              <option value="lt-LT">Lithuanian (Lithuania)</option>
-              <option value="lv-LV">Latvian (Latvia)</option>
-              <option value="ml-IN">Malayalam (India)</option>
-              <option value="mr-IN">Marathi (India)</option>
-              <option value="ms-MY">Malay (Malaysia)</option>
-              <option value="nb-NO">Norwegian Bokmål (Norway)</option>
-              <option value="nl-BE">Dutch (Belgium)</option>
-              <option value="nl-NL">Dutch (Netherlands)</option>
-              <option value="no-NO">Norwegian (Norway)</option>
-              <option value="pa-IN">Punjabi (India)</option>
-              <option value="pl-PL">Polish (Poland)</option>
-              <option value="pt-BR">Portuguese (Brazil)</option>
-              <option value="pt-PT">Portuguese (Portugal)</option>
-              <option value="ro-RO">Romanian (Romania)</option>
-              <option value="ru-RU">Russian (Russia)</option>
-              <option value="si-LK">Sinhala (Sri Lanka)</option>
-              <option value="sk-SK">Slovak (Slovakia)</option>
-              <option value="sl-SI">Slovenian (Slovenia)</option>
-              <option value="sq-AL">Albanian (Albania)</option>
-              <option value="sr-RS">Serbian (Serbia)</option>
-              <option value="sv-SE">Swedish (Sweden)</option>
-              <option value="ta-IN">Tamil (India)</option>
-              <option value="te-IN">Telugu (India)</option>
-              <option value="th-TH">Thai (Thailand)</option>
-              <option value="tl-PH">Tagalog (Philippines)</option>
-              <option value="tr-TR">Turkish (Turkey)</option>
-              <option value="uk-UA">Ukrainian (Ukraine)</option>
-              <option value="vi-VN">Vietnamese (Vietnam)</option>
-              <option value="zh-CN">Chinese (China)</option>
-              <option value="zh-HK">Chinese (Hong Kong)</option>
-              <option value="zh-TW">Chinese (Taiwan)</option>
-              <option value="zu-ZA">Zulu (South Africa)</option>
-            </select>
-            <div class="help-text">
-              Select the language to display movie and series titles (Description will still be in English)
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="geminiModel"
-              >Gemini Model Name</label
-            >
-            <select id="geminiModel" class="form-select">
-              <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
-              <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
-              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-              <option value="gemini-pro-latest">gemini-pro-latest</option>
-              <option value="gemini-flash-latest">gemini-flash-latest</option>
-              <option value="gemini-flash-lite-latest" selected>gemini-flash-lite-latest</option>
-              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-              <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
-              <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
-              <option value="gemma-4-31b-it">gemma-4-31b-it</option>
-            </select>
-            <div class="help-text">
-              Select the Gemini model to use. See available models at
-              <a
-                href="https://ai.google.dev/gemini-api/docs/models/gemini"
-                target="_blank"
-              >
-                Gemini Models Documentation
-              </a>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="numResults"
-              >Number of AI Recommendations (Max: 30)</label
-            >
-            <input
-              type="number"
-              id="numResults"
-              placeholder="Default: 20"
-              min="1"
-              max="30"
-              step="1"
-              value="20"
-            />
-            <div class="help-text">
-              Higher values may increase response time
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="maxTurns"
-              >AI Agent Max Turns</label
-            >
-            <input
-              type="number"
-              id="maxTurns"
-              placeholder="Default: 6"
-              min="4"
-              max="12"
-              step="1"
-              value="6"
-            />
-            <div class="help-text">
-              Maximum number of reasoning turns the AI agent can use. Higher values may improve results but increase response time.
-            </div>
-          </div>
-        </div>
-
-        <div class="button-group">
-          <button id="configureBtn" type="button" onclick="generateUrl(event)">
-            Configure Addon in Stremio
-          </button>
-          <button id="copyBtn" type="button" onclick="copyUrl(event)">
-            Copy Installation URL
-          </button>
-        </div>
-
-        <div id="error" class="error"></div>
-        <div id="manual-url" class="manual-url"></div>
-        <div id="copy-feedback" class="copy-feedback">
-          URL copied to clipboard!
-        </div>
-
-        <a
-          href="https://buymeacoffee.com/eremesng"
-          target="_blank"
-          class="bmc-button"
-        >
-          <img src="bmc.png" alt="Buy me a coffee" />
-        </a>
-
-        <!-- Add Submit Issue/Ideas button -->
-        <button
-          id="submitIssueBtn"
-          class="submit-issue-button"
-          onclick="event.preventDefault(); openIssueModal()"
-        >
-          Submit Issue/Ideas
-        </button>
-
-        <!-- Issue Modal -->
-        <div id="issueModal" class="modal">
-          <div class="modal-content">
-            <span class="close-modal">&times;</span>
-            <h2>Submit Issue/Ideas</h2>
-            <form id="issueForm" onsubmit="return false;">
-              <div class="form-group">
-                <label class="form-label" for="feedbackType"
-                  >Feedback Type <span class="required">*</span></label
-                >
-                <select
-                  id="feedbackType"
-                  class="form-select"
-                  required
-                  onchange="toggleIssueFields()"
-                >
-                  <option value="issue">Issue</option>
-                  <option value="idea">Idea</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label class="form-label" for="issueTitle"
-                  >Title <span class="required">*</span></label
-                >
-                <input
-                  type="text"
-                  id="issueTitle"
-                  class="form-select"
-                  required
-                  placeholder="Brief summary of your issue/idea"
-                />
-              </div>
-
-              <div id="issueFields">
-                <div class="form-group">
-                  <label class="form-label" for="deviceType"
-                    >Device Type <span class="required">*</span></label
-                  >
-                  <select
-                    id="deviceType"
-                    class="form-select"
-                    required
-                    onchange="toggleBrowserSelect()"
-                  >
-                    <option value="windows">Windows</option>
-                    <option value="mac">macOS</option>
-                    <option value="linux">Linux</option>
-                    <option value="android">Android</option>
-                    <option value="ios">iOS</option>
-                    <option value="web">Web Browser</option>
-                    <option value="other">Other</option>
-                  </select>
-                  <div
-                    id="otherDeviceMessage"
-                    style="
-                      color: #ff4444;
-                      font-size: 12px;
-                      margin-top: 4px;
-                      display: none;
-                    "
-                  >
-                    Please include your device details in the comments section
-                  </div>
-                </div>
-                <div
-                  id="browserSelectContainer"
-                  class="form-group"
-                  style="display: none"
-                >
-                  <label for="browserType" class="form-label"
-                    >Browser Type <span class="required">*</span></label
-                  >
-                  <select id="browserType" class="form-select">
-                    <option value="chrome">Google Chrome</option>
-                    <option value="firefox">Firefox</option>
-                    <option value="safari">Safari</option>
-                    <option value="edge">Microsoft Edge</option>
-                    <option value="opera">Opera</option>
-                    <option value="brave">Brave</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label" for="errorDetails"
-                    >Error Details</label
-                  >
-                  <textarea
-                    id="errorDetails"
-                    class="form-textarea"
-                    rows="3"
-                    placeholder="Any error messages you encountered"
-                    oninput="updateCommentsValidation()"
-                  ></textarea>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label class="form-label" for="comments"
-                  >Comments
-                  <span id="commentsRequired" class="required">*</span></label
-                >
-                <textarea
-                  id="comments"
-                  class="form-textarea"
-                  rows="4"
-                  placeholder="Please describe your issue or idea in detail"
-                  oninput="updateCommentsValidation()"
-                ></textarea>
-              </div>
-              <div id="submitFeedback" class="feedback-container"></div>
-
-              <button
-                type="button"
-                onclick="submitIssue(event)"
-                class="submit-button"
-              >
-                Submit
-              </button>
-            </form>
-          </div>
-        </div>
-      </form>
+    <div aria-hidden="true" class="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div class="absolute -left-20 top-10 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl"></div>
+        <div class="absolute right-0 top-28 h-80 w-80 rounded-full bg-blue-500/10 blur-3xl"></div>
+        <div class="absolute bottom-0 left-1/2 h-96 w-[32rem] -translate-x-1/2 rounded-full bg-cyan-400/5 blur-3xl"></div>
     </div>
 
-    <footer>
-      Made with <span class="heart">❤</span> by EremesNG<br />Submit
-      feature requests, issues at
-      <a
-        href="https://github.com/EremesNG/stremio-ai-picks"
-        target="_blank"
-        class="github-link"
-      >
-        <svg
-          height="20"
-          aria-hidden="true"
-          color="#fff"
-          viewBox="0 0 24 24"
-          version="1.1"
-          width="20"
-          class="github-icon"
-        >
-          <path
-            d="M12.5.75C6.146.75 1 5.896 1 12.25c0 5.089 3.292 9.387 7.863 10.91.575.101.79-.244.79-.546 0-.273-.014-1.178-.014-2.142-2.889.532-3.636-.704-3.866-1.35-.13-.331-.69-1.352-1.18-1.625-.402-.216-.977-.748-.014-.762.906-.014 1.553.834 1.769 1.179 1.035 1.74 2.688 1.25 3.349.948.1-.747.402-1.25.733-1.538-2.559-.287-5.232-1.279-5.232-5.678 0-1.25.445-2.285 1.178-3.09-.115-.288-.517-1.467.115-3.048 0 0 .963-.302 3.163 1.179.92-.259 1.897-.388 2.875-.388.977 0 1.955.13 2.875.388 2.2-1.495 3.162-1.179 3.162-1.179.633 1.581.23 2.76.115 3.048.733.805 1.179 1.825 1.179 3.09 0 4.413-2.688 5.39-5.247 5.678.417.36.776 1.05.776 2.128 0 1.538-.014 2.774-.014 3.162 0 .302.216.662.79.547C20.709 21.637 24 17.324 24 12.25 24 5.896 18.854.75 12.5.75Z"
-          ></path>
-        </svg>
-      </a>
+    <main class="config-shell flex-grow mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8 animate-slide-up">
+        
+        <!-- Header -->
+        <section class="hero-panel mb-8">
+            <div class="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+                <div class="space-y-5">
+                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
+                        <div class="inline-flex h-20 w-20 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-2xl shadow-black/30 ring-1 ring-white/5 transition-transform duration-300 hover:scale-[1.02]">
+                            <img src="logo.png" alt="AI Picks Logo" class="logo h-14 w-14 object-contain" />
+                        </div>
+                        <div class="space-y-2">
+                            <p class="hero-kicker">Stremio addon configuration</p>
+                            <h1 class="hero-title">Configure</h1>
+                            <p class="hero-subtitle">Set up your personalized AI recommendation engine with premium controls, refined defaults, and Trakt-powered personalization.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <span class="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/70">Gemini AI</span>
+                        <span class="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/70">TMDB + Trakt</span>
+                    </div>
+                </div>
+
+                <div class="flex justify-start lg:justify-end">
+                    <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FEremesNG%2Fstremio-ai-picks%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=0d9488&style=for-the-badge" alt="Stremio AI Picks Queries" class="rounded-xl border border-white/10 shadow-lg shadow-black/30" />
+                </div>
+            </div>
+        </section>
+
+        <form id="configForm" class="space-y-8">
+            
+            <!-- Essential API Keys -->
+            <div class="section-card space-y-5">
+                <h2 class="text-xl font-semibold text-white mb-6 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                    Essential API Keys
+                </h2>
+                
+                <div class="space-y-6">
+                    <div class="form-group">
+                        <label class="block text-sm font-medium text-slate-300 mb-2" for="geminiKey">Gemini API Key <span class="required">*</span></label>
+                        <input type="password" autocomplete="false" id="geminiKey" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Enter your key from Google AI Studio" />
+                        <div class="help-text">Get a free key from <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="block text-sm font-medium text-slate-300 mb-2" for="tmdbKey">TMDB API Key <span class="required">*</span></label>
+                        <input type="password" id="tmdbKey" autocomplete="false" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Enter your TMDB API key" />
+                        <div class="help-text">Get a free key from <a href="https://www.themoviedb.org/settings/api" target="_blank">TMDB</a></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trakt Integration -->
+            <div class="relative overflow-hidden rounded-2xl border border-[#9f42c6]/20 bg-gradient-to-br from-[#9f42c6]/[0.08] to-transparent p-6 md:p-8">
+                <div aria-hidden="true" class="pointer-events-none absolute -right-20 -top-20 h-40 w-40 rounded-full bg-[#9f42c6]/10 blur-3xl"></div>
+
+                <div class="relative space-y-4">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[#9f42c6]/20 shadow-lg shadow-[#9f42c6]/10">
+                            <svg class="h-5 w-5 text-[#d9b4ea]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M8 5h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z" />
+                                <path d="M10 9.5v5l4-2.5-4-2.5Z" fill="currentColor" stroke="none" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="font-display text-lg font-bold text-white">Trakt.tv Integration</h2>
+                            <p class="text-sm text-white/40">Sync your watch history</p>
+                        </div>
+                    </div>
+
+                    <p class="max-w-2xl text-[15px] leading-relaxed text-white/60">
+                        Connect your Trakt.tv account to get personalized movie recommendations based on your watch history and ratings.
+                    </p>
+
+                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
+                        <button id="traktAuthBtn" type="button" class="inline-flex items-center gap-2 rounded-xl bg-[#9f42c6] px-5 py-2.5 font-semibold text-white transition-all duration-200 hover:bg-[#8a37ad] hover:shadow-lg hover:shadow-[#9f42c6]/25" onclick="authenticateTrakt()">
+                            <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M15 8.5 19 12l-4 3.5" />
+                                <path d="M5 12h14" />
+                            </svg>
+                            Login with Trakt.tv
+                        </button>
+                        <p class="text-xs leading-relaxed text-white/30 sm:max-w-sm">Re-authentication required every 90 days</p>
+                    </div>
+
+                    <div class="form-group mt-4 rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4" id="filterWatchedGroup" style="display: none;">
+                        <label class="toggle-label">
+                            <input type="checkbox" class="sr-only peer" id="filterWatched" checked />
+                            <span class="toggle-track" aria-hidden="true"></span>
+                            <span class="toggle-content">
+                                <span class="toggle-title">Filter out watched/rated items</span>
+                                <span class="toggle-subtitle">The AI agent will check your Trakt history to avoid recommending items you've already seen.</span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <input type="hidden" id="traktAccessToken" />
+                    <input type="hidden" id="traktRefreshToken" />
+                    <input type="hidden" id="traktUsername" />
+                    <input type="hidden" id="traktExpiresIn" />
+                </div>
+            </div>
+
+            <div class="section-divider"></div>
+
+            <!-- Advanced Options Toggle -->
+            <div class="flex items-center justify-center py-2">
+                <label class="toggle-label advanced-toggle max-w-xl">
+                    <input type="checkbox" class="sr-only peer" id="showAdvancedOptions" />
+                    <span class="toggle-track" aria-hidden="true"></span>
+                    <span class="toggle-content">
+                        <span class="toggle-title">Show Advanced Options</span>
+                        <span class="toggle-subtitle">Unlock model tuning, homepage catalogs, and visual enhancements.</span>
+                    </span>
+                </label>
+            </div>
+
+            <!-- Advanced Configuration -->
+            <div id="advancedOptions" class="space-y-6" style="display: none;">
+                
+                <!-- Preferences -->
+                <div class="section-card space-y-5">
+                    <h3 class="text-lg font-semibold text-white mb-5 border-b border-white/10 pb-3">General Preferences</h3>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div class="form-group">
+                            <label class="block text-sm font-medium text-slate-300 mb-2" for="tmdbLanguage">Content Language</label>
+                            <select id="tmdbLanguage" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all appearance-none text-base">
+                                <option class="bg-slate-800 text-white" value="en-US" selected>English (United States)</option>
+                                <option class="bg-slate-800 text-white" value="es-ES">Spanish (Spain)</option>
+                                <option class="bg-slate-800 text-white" value="es-MX">Spanish (Mexico)</option>
+                                <option class="bg-slate-800 text-white" value="fr-FR">French (France)</option>
+                                <option class="bg-slate-800 text-white" value="de-DE">German (Germany)</option>
+                                <option class="bg-slate-800 text-white" value="it-IT">Italian (Italy)</option>
+                                <option class="bg-slate-800 text-white" value="pt-BR">Portuguese (Brazil)</option>
+                                <option class="bg-slate-800 text-white" value="ru-RU">Russian (Russia)</option>
+                                <option class="bg-slate-800 text-white" value="ja-JP">Japanese (Japan)</option>
+                                <option class="bg-slate-800 text-white" value="ko-KR">Korean (South Korea)</option>
+                                <option class="bg-slate-800 text-white" value="zh-CN">Chinese (China)</option>
+                                <!-- Keeping it brief for the UI, the JS will populate the rest if needed, or we just keep the full list -->
+                                <option class="bg-slate-800 text-white" value="af-ZA">Afrikaans (South Africa)</option>
+                                <option class="bg-slate-800 text-white" value="ar-AE">Arabic (UAE)</option>
+                                <option class="bg-slate-800 text-white" value="ar-SA">Arabic (Saudi Arabia)</option>
+                                <option class="bg-slate-800 text-white" value="be-BY">Belarusian (Belarus)</option>
+                                <option class="bg-slate-800 text-white" value="bg-BG">Bulgarian (Bulgaria)</option>
+                                <option class="bg-slate-800 text-white" value="bn-BD">Bengali (Bangladesh)</option>
+                                <option class="bg-slate-800 text-white" value="ca-ES">Catalan (Spain)</option>
+                                <option class="bg-slate-800 text-white" value="ch-GU">Chamorro (Guam)</option>
+                                <option class="bg-slate-800 text-white" value="cs-CZ">Czech (Czech Republic)</option>
+                                <option class="bg-slate-800 text-white" value="cy-GB">Welsh (United Kingdom)</option>
+                                <option class="bg-slate-800 text-white" value="da-DK">Danish (Denmark)</option>
+                                <option class="bg-slate-800 text-white" value="de-AT">German (Austria)</option>
+                                <option class="bg-slate-800 text-white" value="de-CH">German (Switzerland)</option>
+                                <option class="bg-slate-800 text-white" value="el-GR">Greek (Greece)</option>
+                                <option class="bg-slate-800 text-white" value="en-AU">English (Australia)</option>
+                                <option class="bg-slate-800 text-white" value="en-CA">English (Canada)</option>
+                                <option class="bg-slate-800 text-white" value="en-GB">English (United Kingdom)</option>
+                                <option class="bg-slate-800 text-white" value="en-IE">English (Ireland)</option>
+                                <option class="bg-slate-800 text-white" value="en-NZ">English (New Zealand)</option>
+                                <option class="bg-slate-800 text-white" value="eo-EO">Esperanto</option>
+                                <option class="bg-slate-800 text-white" value="et-EE">Estonian (Estonia)</option>
+                                <option class="bg-slate-800 text-white" value="eu-ES">Basque (Spain)</option>
+                                <option class="bg-slate-800 text-white" value="fa-IR">Persian (Iran)</option>
+                                <option class="bg-slate-800 text-white" value="fi-FI">Finnish (Finland)</option>
+                                <option class="bg-slate-800 text-white" value="fr-CA">French (Canada)</option>
+                                <option class="bg-slate-800 text-white" value="ga-IE">Irish (Ireland)</option>
+                                <option class="bg-slate-800 text-white" value="gl-ES">Galician (Spain)</option>
+                                <option class="bg-slate-800 text-white" value="he-IL">Hebrew (Israel)</option>
+                                <option class="bg-slate-800 text-white" value="hi-IN">Hindi (India)</option>
+                                <option class="bg-slate-800 text-white" value="hr-HR">Croatian (Croatia)</option>
+                                <option class="bg-slate-800 text-white" value="hu-HU">Hungarian (Hungary)</option>
+                                <option class="bg-slate-800 text-white" value="id-ID">Indonesian (Indonesia)</option>
+                                <option class="bg-slate-800 text-white" value="is-IS">Icelandic (Iceland)</option>
+                                <option class="bg-slate-800 text-white" value="ka-GE">Georgian (Georgia)</option>
+                                <option class="bg-slate-800 text-white" value="kk-KZ">Kazakh (Kazakhstan)</option>
+                                <option class="bg-slate-800 text-white" value="kn-IN">Kannada (India)</option>
+                                <option class="bg-slate-800 text-white" value="ky-KG">Kyrgyz (Kyrgyzstan)</option>
+                                <option class="bg-slate-800 text-white" value="lt-LT">Lithuanian (Lithuania)</option>
+                                <option class="bg-slate-800 text-white" value="lv-LV">Latvian (Latvia)</option>
+                                <option class="bg-slate-800 text-white" value="ml-IN">Malayalam (India)</option>
+                                <option class="bg-slate-800 text-white" value="mr-IN">Marathi (India)</option>
+                                <option class="bg-slate-800 text-white" value="ms-MY">Malay (Malaysia)</option>
+                                <option class="bg-slate-800 text-white" value="nb-NO">Norwegian Bokmål (Norway)</option>
+                                <option class="bg-slate-800 text-white" value="nl-BE">Dutch (Belgium)</option>
+                                <option class="bg-slate-800 text-white" value="nl-NL">Dutch (Netherlands)</option>
+                                <option class="bg-slate-800 text-white" value="no-NO">Norwegian (Norway)</option>
+                                <option class="bg-slate-800 text-white" value="pa-IN">Punjabi (India)</option>
+                                <option class="bg-slate-800 text-white" value="pl-PL">Polish (Poland)</option>
+                                <option class="bg-slate-800 text-white" value="pt-PT">Portuguese (Portugal)</option>
+                                <option class="bg-slate-800 text-white" value="ro-RO">Romanian (Romania)</option>
+                                <option class="bg-slate-800 text-white" value="si-LK">Sinhala (Sri Lanka)</option>
+                                <option class="bg-slate-800 text-white" value="sk-SK">Slovak (Slovakia)</option>
+                                <option class="bg-slate-800 text-white" value="sl-SI">Slovenian (Slovenia)</option>
+                                <option class="bg-slate-800 text-white" value="sq-AL">Albanian (Albania)</option>
+                                <option class="bg-slate-800 text-white" value="sr-RS">Serbian (Serbia)</option>
+                                <option class="bg-slate-800 text-white" value="sv-SE">Swedish (Sweden)</option>
+                                <option class="bg-slate-800 text-white" value="ta-IN">Tamil (India)</option>
+                                <option class="bg-slate-800 text-white" value="te-IN">Telugu (India)</option>
+                                <option class="bg-slate-800 text-white" value="th-TH">Thai (Thailand)</option>
+                                <option class="bg-slate-800 text-white" value="tl-PH">Tagalog (Philippines)</option>
+                                <option class="bg-slate-800 text-white" value="tr-TR">Turkish (Turkey)</option>
+                                <option class="bg-slate-800 text-white" value="uk-UA">Ukrainian (Ukraine)</option>
+                                <option class="bg-slate-800 text-white" value="vi-VN">Vietnamese (Vietnam)</option>
+                                <option class="bg-slate-800 text-white" value="zh-HK">Chinese (Hong Kong)</option>
+                                <option class="bg-slate-800 text-white" value="zh-TW">Chinese (Taiwan)</option>
+                                <option class="bg-slate-800 text-white" value="zu-ZA">Zulu (South Africa)</option>
+                            </select>
+                            <div class="help-text">Language for movie/series titles</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="block text-sm font-medium text-slate-300 mb-2" for="geminiModel">Gemini Model</label>
+                            <select id="geminiModel" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all appearance-none text-base">
+                                <option class="bg-slate-800 text-white" value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                                <option class="bg-slate-800 text-white" value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                                <option class="bg-slate-800 text-white" value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+                                <option class="bg-slate-800 text-white" value="gemini-2.5-pro">gemini-2.5-pro</option>
+                                <option class="bg-slate-800 text-white" value="gemini-pro-latest">gemini-pro-latest</option>
+                                <option class="bg-slate-800 text-white" value="gemini-flash-latest">gemini-flash-latest</option>
+                                <option class="bg-slate-800 text-white" value="gemini-flash-lite-latest" selected>gemini-flash-lite-latest</option>
+                                <option class="bg-slate-800 text-white" value="gemini-2.5-flash">gemini-2.5-flash</option>
+                                <option class="bg-slate-800 text-white" value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+                                <option class="bg-slate-800 text-white" value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                <option class="bg-slate-800 text-white" value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+                                <option class="bg-slate-800 text-white" value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                                <option class="bg-slate-800 text-white" value="gemma-4-31b-it">gemma-4-31b-it</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="block text-sm font-medium text-slate-300 mb-2" for="numResults">Results Count (Max: 30)</label>
+                            <input type="number" id="numResults" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Default: 20" min="1" max="30" step="1" value="20" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="block text-sm font-medium text-slate-300 mb-2" for="maxTurns">AI Max Turns</label>
+                            <input type="number" id="maxTurns" class="w-24 bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Default: 6" min="4" max="12" step="1" value="6" />
+                        </div>
+                    </div>
+
+                    <div class="space-y-4 bg-white/[0.02] p-5 rounded-2xl border border-white/[0.05]">
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" class="sr-only peer" id="enableAiCache" checked />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                                <span class="toggle-content">
+                                    <span class="toggle-title">Enable AI Response Caching</span>
+                                    <span class="toggle-subtitle">Improves performance by reusing previous AI responses.</span>
+                                </span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" class="sr-only peer" id="includeAdult" />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                                <span class="toggle-content">
+                                    <span class="toggle-title">Include Adult (18+) Content</span>
+                                </span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" class="sr-only peer" id="enableSimilar" checked />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                                <span class="toggle-content">
+                                    <span class="toggle-title">Enable 'Similar' Recommendations</span>
+                                    <span class="toggle-subtitle">Shows a "Similar movies and shows" link on detail pages.</span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Homepage Catalogs -->
+                <div class="section-card space-y-5">
+                    <h3 class="text-lg font-semibold text-white mb-5 border-b border-white/10 pb-3">Homepage Catalogs</h3>
+                    
+                    <div class="form-group mb-6">
+                        <label class="toggle-label">
+                            <input type="checkbox" class="sr-only peer" id="enableHomepage" checked />
+                            <span class="toggle-track" aria-hidden="true"></span>
+                            <span class="toggle-content">
+                                <span class="toggle-title">Show AI Recommendations on Homepage</span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="form-group bg-white/[0.02] p-5 rounded-2xl border border-white/[0.05]" id="homepageQueryGroup" style="display: none;">
+                        <label class="form-label mb-4">Custom Homepage Catalogs</label>
+                        <div id="catalogRowsContainer" class="space-y-3 mb-4">
+                            <!-- Rows dynamically added -->
+                        </div>
+                        <button type="button" class="text-sm px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 transition-colors" onclick="addCatalogRow()">
+                            + Add Catalog
+                        </button>
+                        <input type="hidden" id="homepageQuery" value="">
+                        <div class="help-text mt-4 bg-white/[0.02] p-3 rounded border border-white/[0.05]">
+                            Add custom catalogs to your homepage. Each catalog needs a Title and an AI search query. e.g. Title: "Mystery", Query: "recommend mystery thrillers". Add "movies" to show only movies. Use 'Recommend' for Trakt recommendations. Use 'New' for new content.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- External APIs -->
+                <div class="section-card section-card--muted space-y-5">
+                    <h3 class="text-lg font-semibold text-white mb-5 border-b border-white/10 pb-3">Visual Enhancements</h3>
+                    
+                    <div class="space-y-6">
+                        <div class="form-group">
+                            <label class="block text-sm font-medium text-slate-300 mb-2" for="fanartKey">Fanart.tv API Key</label>
+                            <input type="password" id="fanartKey" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Optional: For high-quality landscape thumbnails" />
+                            <div class="help-text">Get a free API key from <a href="https://fanart.tv/get-an-api-key/" target="_blank">Fanart.tv</a> for better "Similar" recommendations thumbnails.</div>
+                        </div>
+
+                        <div class="border-t border-white/10 pt-6">
+                        <div class="form-group mb-4">
+                            <label class="toggle-label">
+                                <input type="checkbox" class="sr-only peer" id="enableRpdbPosters" />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                                <span class="toggle-content">
+                                    <span class="toggle-title">Enable High-Quality Posters (RPDB) with ratings</span>
+                                </span>
+                            </label>
+                        </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="form-group" id="rpdbKeyGroup" style="display: none">
+                                    <label class="block text-sm font-medium text-slate-300 mb-2" for="rpdbKey">RPDB API Key</label>
+                                    <input type="password" id="rpdbKey" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Optional: For high-quality posters" />
+                                    <div class="help-text">Get a key from <a href="https://ratingposterdb.com/" target="_blank">Rating Poster DB</a></div>
+                                </div>
+
+                                <div class="form-group" id="rpdbPosterTypeGroup" style="display: none">
+                                    <label class="block text-sm font-medium text-slate-300 mb-2" for="rpdbPosterType">RPDB Poster Style</label>
+                                    <select id="rpdbPosterType" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all appearance-none text-base">
+                                        <option class="bg-slate-800 text-white" value="poster-default">Default</option>
+                                        <option class="bg-slate-800 text-white" value="poster-clean">Clean</option>
+                                        <option class="bg-slate-800 text-white" value="poster-imdb">IMDb Style</option>
+                                        <option class="bg-slate-800 text-white" value="poster-rt">Rotten Tomatoes Style</option>
+                                        <option class="bg-slate-800 text-white" value="poster-metacritic">Metacritic Style</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-divider"></div>
+
+            <!-- Actions -->
+            <div class="action-bar backdrop-blur-xl bg-void/80 border-t border-white/10 p-6 sticky bottom-0 z-40 w-full mt-8 rounded-t-3xl">
+                <div id="error" class="hidden mb-4 p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm text-center"></div>
+                
+                <div class="mx-auto flex w-full max-w-5xl justify-center">
+                    <button id="installBtn" type="button" class="btn-primary inline-flex w-full max-w-md items-center justify-center gap-3" onclick="openInstallFlow(event)" disabled>
+                        <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <path d="M7 10l5 5 5-5" />
+                            <path d="M12 15V3" />
+                        </svg>
+                        <span>Install</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Footer Links -->
+            <div class="flex flex-col items-center gap-4 mt-12 pb-24">
+                <a href="https://buymeacoffee.com/eremesng" target="_blank" class="transform hover:scale-105 transition-transform">
+                    <img src="bmc.png" alt="Buy me a coffee" class="h-10 w-auto" />
+                </a>
+
+                <button id="submitIssueBtn" class="text-sm text-gray-500 hover:text-cyan-400 transition-colors" onclick="event.preventDefault(); openIssueModal()">
+                    Submit Issue / Ideas
+                </button>
+            </div>
+        </form>
+    </main>
+
+    <footer class="border-t border-white/10 py-8 text-center text-gray-500 text-sm">
+        <p class="flex items-center justify-center gap-1">
+            Made with <span class="text-red-500 text-lg">❤</span> by EremesNG
+        </p>
+        <a href="https://github.com/EremesNG/stremio-ai-picks" target="_blank" class="inline-flex items-center gap-2 mt-2 hover:text-white transition-colors group">
+             <svg class="w-5 h-5 fill-current group-hover:text-cyan-400 transition-colors" viewBox="0 0 24 24"><path d="M12.5.75C6.146.75 1 5.896 1 12.25c0 5.089 3.292 9.387 7.863 10.91.575.101.79-.244.79-.546 0-.273-.014-1.178-.014-2.142-2.889.532-3.636-.704-3.866-1.35-.13-.331-.69-1.352-1.18-1.625-.402-.216-.977-.748-.014-.762.906-.014 1.553.834 1.769 1.179 1.035 1.74 2.688 1.25 3.349.948.1-.747.402-1.25.733-1.538-2.559-.287-5.232-1.279-5.232-5.678 0-1.25.445-2.285 1.178-3.09-.115-.288-.517-1.467.115-3.048 0 0 .963-.302 3.163 1.179.92-.259 1.897-.388 2.875-.388.977 0 1.955.13 2.875.388 2.2-1.495 3.162-1.179 3.162-1.179.633 1.581.23 2.76.115 3.048.733.805 1.179 1.825 1.179 3.09 0 4.413-2.688 5.39-5.247 5.678.417.36.776 1.05.776 2.128 0 1.538-.014 2.774-.014 3.162 0 .302.216.662.79.547C20.709 21.637 24 17.324 24 12.25 24 5.896 18.854.75 12.5.75Z"></path></svg>
+             GitHub Repository
+         </a>
     </footer>
 
+    <!-- Issue Modal -->
+    <div id="issueModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-200" onclick="if (event.target === event.currentTarget) closeIssueModal()">
+        <div class="modal-content p-6 md:p-8">
+            <span class="close-modal absolute top-4 right-6 text-2xl text-gray-500 hover:text-white cursor-pointer transition-colors">&times;</span>
+            <h2 class="text-2xl font-bold text-white mb-6">Submit Issue / Ideas</h2>
+            
+            <form id="issueForm" onsubmit="return false;" class="space-y-6">
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-slate-300 mb-2" for="feedbackType">Feedback Type <span class="required">*</span></label>
+                    <select id="feedbackType" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all appearance-none text-base" required onchange="toggleIssueFields()">
+                        <option class="bg-slate-800 text-white" value="issue">Issue</option>
+                        <option class="bg-slate-800 text-white" value="idea">Idea</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-slate-300 mb-2" for="issueTitle">Title <span class="required">*</span></label>
+                    <input type="text" id="issueTitle" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" required placeholder="Brief summary of your issue/idea" />
+                </div>
+
+                <div id="issueFields" class="space-y-6">
+                    <div class="form-group">
+                        <label class="block text-sm font-medium text-slate-300 mb-2" for="deviceType">Device Type <span class="required">*</span></label>
+                        <select id="deviceType" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all appearance-none text-base" required onchange="toggleBrowserSelect()">
+                            <option class="bg-slate-800 text-white" value="windows">Windows</option>
+                            <option class="bg-slate-800 text-white" value="mac">macOS</option>
+                            <option class="bg-slate-800 text-white" value="linux">Linux</option>
+                            <option class="bg-slate-800 text-white" value="android">Android</option>
+                            <option class="bg-slate-800 text-white" value="ios">iOS</option>
+                            <option class="bg-slate-800 text-white" value="web">Web Browser</option>
+                            <option class="bg-slate-800 text-white" value="other">Other</option>
+                        </select>
+                        <div id="otherDeviceMessage" class="hidden text-cyan-400 text-xs mt-2">
+                            Please include your device details in the comments section
+                        </div>
+                    </div>
+                    
+                    <div id="browserSelectContainer" class="form-group hidden">
+                        <label for="browserType" class="block text-sm font-medium text-slate-300 mb-2">Browser Type <span class="required">*</span></label>
+                        <select id="browserType" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all appearance-none text-base">
+                            <option class="bg-slate-800 text-white" value="chrome">Google Chrome</option>
+                            <option class="bg-slate-800 text-white" value="firefox">Firefox</option>
+                            <option class="bg-slate-800 text-white" value="safari">Safari</option>
+                            <option class="bg-slate-800 text-white" value="edge">Microsoft Edge</option>
+                            <option class="bg-slate-800 text-white" value="opera">Opera</option>
+                            <option class="bg-slate-800 text-white" value="brave">Brave</option>
+                            <option class="bg-slate-800 text-white" value="other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="block text-sm font-medium text-slate-300 mb-2" for="errorDetails">Error Details</label>
+                        <textarea id="errorDetails" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base min-h-[100px] resize-y" rows="3" placeholder="Any error messages you encountered" oninput="updateCommentsValidation()"></textarea>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-slate-300 mb-2" for="comments">Comments <span id="commentsRequired" class="required">*</span></label>
+                    <textarea id="comments" class="w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base min-h-[100px] resize-y" rows="4" placeholder="Please describe your issue or idea in detail" oninput="updateCommentsValidation()"></textarea>
+                </div>
+                
+                <div id="submitFeedback" class="hidden p-4 rounded-lg text-sm text-center"></div>
+
+                <button type="button" onclick="submitIssue(event)" class="submit-button w-full py-3 bg-cyan-500 hover:bg-cyan-400 text-void font-medium rounded-lg transition-colors mt-6">
+                    Submit
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Install Modal -->
+    <div id="installModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-200" onclick="if (event.target === event.currentTarget) hideInstallModal()">
+        <div class="modal-content p-6 md:p-8">
+            <button type="button" class="close-modal absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white/60 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white" aria-label="Close install modal" onclick="hideInstallModal()">
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                </svg>
+            </button>
+
+            <div class="flex flex-col gap-5">
+                <div class="flex items-start gap-4 pr-10">
+                    <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-cyan-400/20 to-blue-500/10 shadow-lg shadow-cyan-400/10">
+                        <svg class="h-7 w-7 text-cyan-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M8 5h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z" />
+                            <path d="M10 9.5v5l4-2.5-4-2.5Z" fill="currentColor" stroke="none" />
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-2xl font-bold text-white">Stremio</h2>
+                        <p class="mt-1 max-w-xl text-sm leading-relaxed text-white/55">Install to Stremio or other compatible clients using the Manifest URL.</p>
+                    </div>
+                </div>
+
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <a id="stremioInstallBtn" href="#" class="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-500 px-6 py-3 font-semibold text-slate-900 transition-all duration-200 hover:bg-cyan-400" onclick="hideInstallModal()">
+                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                        </svg>
+                        <span>Install to Stremio</span>
+                    </a>
+                    <a id="stremioWebInstallBtn" href="#" target="_blank" rel="noreferrer" class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/[0.1] bg-white/[0.06] px-6 py-3 font-medium text-white transition-all duration-200 hover:bg-white/[0.1]">
+                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        <span>Install to Stremio Web</span>
+                    </a>
+                </div>
+
+                <div class="space-y-3 rounded-2xl border border-white/8 bg-white/[0.03] p-4 sm:p-5">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <p class="text-sm font-semibold uppercase tracking-[0.18em] text-white/45">Direct Manifest URL</p>
+                            <p class="mt-1 text-sm text-white/45">Copy this URL if you want to install manually.</p>
+                        </div>
+                        <button id="copyManifestBtn" type="button" class="inline-flex shrink-0 items-center justify-center rounded-lg bg-white/[0.06] p-2 text-white/70 transition hover:bg-white/[0.1] hover:text-white" aria-label="Copy manifest URL" title="Copy manifest URL" onclick="copyManifestUrl()">
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <rect x="9" y="9" width="11" height="11" rx="2" />
+                                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="relative">
+                        <input type="text" id="manifestUrlDisplay" readonly class="w-full rounded-xl border border-white/10 bg-white/5 pr-16 font-mono text-xs text-white sm:text-sm" value="" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <input type="hidden" id="existingConfigId" name="existingConfigId" value="" />
+
+    <!-- Scripts -->
+    <script src="https://www.google.com/recaptcha/api.js?render=6LcUAMAsAAAAAM2vbAOcZK4VqPJ9xmBSYTi5VSUa"></script>
     <script>
       const addonName = "AI Picks";
-      const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID"; // This will be replaced with the actual client ID from the server
-      const HOST = "github.com/EremesNG/stremio-ai-picks"; // This will be replaced with the actual host from the server
+      const TRAKT_CLIENT_ID = "YOUR_ADDON_CLIENT_ID"; 
+      const HOST = "github.com/EremesNG/stremio-ai-picks"; 
+
+      let currentManifestUrl = "";
+      let installInProgress = false;
 
       function setLoading(isLoading) {
-        const configureBtn = document.getElementById("configureBtn");
-        const copyBtn = document.getElementById("copyBtn");
+        installInProgress = isLoading;
 
-        if (isLoading) {
-          configureBtn.disabled = true;
-          copyBtn.disabled = true;
-          configureBtn.textContent = "Validating...";
-          copyBtn.textContent = "Validating...";
-        } else {
-          configureBtn.disabled = false;
-          copyBtn.disabled = false;
-          configureBtn.textContent = document.getElementById("existingConfigId")
-            .value
-            ? "Update Configuration in Stremio"
-            : "Configure Addon in Stremio";
-          copyBtn.textContent = document.getElementById("existingConfigId")
-            .value
-            ? "Copy Updated URL"
-            : "Copy Installation URL";
+        const installBtn = document.getElementById("installBtn");
+        if (installBtn) {
+          if (isLoading) {
+            if (!installBtn.dataset.defaultHtml) {
+              installBtn.dataset.defaultHtml = installBtn.innerHTML;
+            }
+            installBtn.innerHTML = '<svg class="animate-spin w-5 h-5 mr-2 shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>Validating...</span>';
+            installBtn.setAttribute("aria-busy", "true");
+          } else if (installBtn.dataset.defaultHtml) {
+            installBtn.innerHTML = installBtn.dataset.defaultHtml;
+            installBtn.removeAttribute("aria-busy");
+          }
         }
+
+        updateInstallButtonState();
       }
 
-      // Add error handling functions
+      function updateInstallButtonState() {
+        const installBtn = document.getElementById("installBtn");
+        if (!installBtn) return;
+
+        const geminiKey = document.getElementById("geminiKey").value.trim();
+        const tmdbKey = document.getElementById("tmdbKey").value.trim();
+        const canInstall = !!geminiKey && !!tmdbKey && !installInProgress;
+
+        installBtn.disabled = !canInstall;
+        installBtn.classList.toggle("opacity-50", !canInstall);
+        installBtn.classList.toggle("cursor-not-allowed", !canInstall);
+        installBtn.classList.toggle("pointer-events-none", !canInstall);
+        installBtn.setAttribute("aria-disabled", String(!canInstall));
+      }
+
       function showError(message) {
         const errorDiv = document.getElementById("error");
-        errorDiv.style.display = "block";
+        errorDiv.classList.remove("hidden");
         errorDiv.textContent = message;
-        document.getElementById("manual-url").style.display = "none";
       }
 
       function clearError() {
         const errorDiv = document.getElementById("error");
-        errorDiv.style.display = "none";
+        errorDiv.classList.add("hidden");
         errorDiv.textContent = "";
       }
 
-      // Update title and heading when page loads
       document.title = `${addonName} Addon Configuration`;
       window.addEventListener("DOMContentLoaded", () => {
-        document.querySelector("h1").textContent = `Stremio ${addonName}`;
+        // Updated to not overwrite the HTML span styling
+        // document.querySelector("h1").textContent = `Stremio ${addonName}`;
       });
 
-      // Remove the old key masking functions and setup
       function setupKeyHandling() {
         const keyInputs = ["geminiKey", "tmdbKey", "rpdbKey", "fanartKey"];
-
         keyInputs.forEach((inputId) => {
           const input = document.getElementById(inputId);
           if (input) {
-            // Add input event listener to trim whitespace
             input.addEventListener("input", function () {
               this.value = this.value.trim();
+              if (inputId === "geminiKey" || inputId === "tmdbKey") {
+                updateInstallButtonState();
+              }
             });
           }
         });
       }
 
-      // Initialize after DOM loads
       document.addEventListener("DOMContentLoaded", function () {
-        // Setup key handling
         setupKeyHandling();
         parseHomepageQuery('');
+        updateInstallButtonState();
       });
 
       function addCatalogRow(title = '', query = '') {
@@ -1200,9 +950,11 @@
         const row = document.createElement('div');
         row.className = 'catalog-row';
         row.innerHTML = `
-          <input type="text" class="catalog-title" placeholder="Category name" value="${title.replace(/"/g, '&quot;')}">
-          <input type="text" class="catalog-query" placeholder="AI search query" value="${query.replace(/"/g, '&quot;')}">
-          <button type="button" class="catalog-remove" onclick="this.parentElement.remove(); updateHomepageQueryHidden();">&times;</button>
+          <input type="text" class="catalog-title w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="Category name" value="${title.replace(/"/g, '&quot;')}">
+          <input type="text" class="catalog-query w-full bg-slate-800/50 border border-slate-600/50 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all text-base" placeholder="AI search query" value="${query.replace(/"/g, '&quot;')}">
+          <button type="button" class="catalog-remove" onclick="this.parentElement.remove(); updateHomepageQueryHidden();">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
         `;
         row.querySelectorAll('input').forEach(input => {
           input.addEventListener('input', updateHomepageQueryHidden);
@@ -1266,8 +1018,7 @@
       window.getAddonUrl = async function () {
         const geminiKey = document.getElementById("geminiKey").value.trim();
         const tmdbKey = document.getElementById("tmdbKey").value.trim();
-        
-        // Basic validation
+
         if (!geminiKey || geminiKey.length < 10) {
           showError("Please enter a valid Gemini API key");
           return null;
@@ -1283,9 +1034,6 @@
           if (!isValid) return null;
           clearError();
 
-          // --- Main Logic Change Starts Here ---
-
-          // 1. Prepare the main configuration object
           const configData = {
             GeminiApiKey: geminiKey,
             TmdbApiKey: tmdbKey,
@@ -1303,7 +1051,6 @@
             FilterWatched: document.getElementById("filterWatched").checked,
           };
 
-          // Add conditional properties
           if (configData.EnableHomepage && document.getElementById("homepageQuery").value.trim()) {
             configData.HomepageQuery = document.getElementById("homepageQuery").value.trim();
           }
@@ -1311,16 +1058,14 @@
             configData.RpdbPosterType = document.getElementById("rpdbPosterType").value;
           }
 
-          // If editing, we pass the existing username to let the server know who this config belongs to
           const existingUsername = document.getElementById("traktUsername").value.trim();
           if (existingUsername) {
               configData.traktUsername = existingUsername;
           }
           
-          // 2. Prepare the Trakt authentication data object (only if a new login just occurred)
           let traktAuthData = null;
           const newAccessToken = document.getElementById("traktAccessToken").value.trim();
-          if (newAccessToken && configData.traktUsername) { // Check username to ensure a successful auth flow
+          if (newAccessToken && configData.traktUsername) {
               traktAuthData = {
                   username: configData.traktUsername,
                   accessToken: newAccessToken,
@@ -1329,20 +1074,16 @@
               };
           }
 
-          // 3. Create the final payload in the new format
           const payload = {
             configData: configData,
-            traktAuthData: traktAuthData, // This will be null if no new Trakt login happened
+            traktAuthData: traktAuthData,
           };
 
-            // 4. Send the new payload to the server
             const response = await fetch(`/encrypt`, {
              method: "POST",
              headers: { "Content-Type": "application/json" },
              body: JSON.stringify(payload),
            });
-
-          // --- Main Logic Change Ends Here ---
 
           if (!response.ok) throw new Error(`Failed to encrypt configuration: ${response.status}`);
           const data = await response.json();
@@ -1361,14 +1102,75 @@
         }
       };
 
+      function showInstallModal(manifestUrl) {
+        currentManifestUrl = manifestUrl;
+        document.getElementById("manifestUrlDisplay").value = manifestUrl;
+        document.getElementById("stremioInstallBtn").href = `stremio://${manifestUrl.replace(/^https:\/\//, "")}`;
+        document.getElementById("stremioWebInstallBtn").href = `https://web.stremio.com/#/addons?addon=${encodeURIComponent(manifestUrl)}`;
+
+        const copyBtn = document.getElementById("copyManifestBtn");
+        copyBtn.innerHTML = `
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+          </svg>
+        `;
+        copyBtn.title = "Copy manifest URL";
+
+        document.getElementById("installModal").classList.remove("hidden");
+      }
+
+      function hideInstallModal() {
+        document.getElementById("installModal").classList.add("hidden");
+      }
+
+      async function copyManifestUrl() {
+        const url = document.getElementById("manifestUrlDisplay").value || currentManifestUrl;
+        if (!url) return;
+
+        const copyBtn = document.getElementById("copyManifestBtn");
+        const originalIcon = `
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+          </svg>
+        `;
+        const successIcon = `
+          <svg class="h-5 w-5 text-cyan-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m5 13 4 4L19 7" />
+          </svg>
+        `;
+
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+          } else {
+            const temp = document.createElement("textarea");
+            temp.value = url;
+            temp.style.position = "fixed";
+            temp.style.opacity = "0";
+            document.body.appendChild(temp);
+            temp.focus();
+            temp.select();
+            document.execCommand("copy");
+            document.body.removeChild(temp);
+          }
+
+          copyBtn.innerHTML = successIcon;
+          copyBtn.title = "Copied!";
+          setTimeout(() => {
+            copyBtn.innerHTML = originalIcon;
+            copyBtn.title = "Copy manifest URL";
+          }, 2000);
+        } catch (error) {
+          copyBtn.title = "Copy failed";
+        }
+      }
+
       async function validateApiKeys(geminiKey, tmdbKey) {
         const errorDiv = document.getElementById("error");
-        const traktAccessToken = document
-          .getElementById("traktAccessToken")
-          .value.trim();
-        const traktRefreshToken = document
-          .getElementById("traktRefreshToken")
-          .value.trim();
+        const traktAccessToken = document.getElementById("traktAccessToken").value.trim();
+        const traktRefreshToken = document.getElementById("traktRefreshToken").value.trim();
         const fanartKey = document.getElementById("fanartKey").value.trim();
 
           try {
@@ -1389,121 +1191,46 @@
           const result = await response.json();
 
           if (!result.gemini || !result.tmdb) {
-            errorDiv.style.display = "block";
+            errorDiv.classList.remove("hidden");
             errorDiv.textContent = Object.values(result.errors).join(". ");
             return false;
           }
 
-          // Show optional API key validation warnings (but don't block submission)
           const warnings = [];
           
           if (fanartKey && !result.fanart) {
             warnings.push("Fanart.tv: " + result.errors.fanart);
           }
 
-          // Show Trakt validation errors if any, but don't block submission
           if (traktAccessToken && !result.trakt) {
             warnings.push("Trakt.tv: " + result.errors.trakt);
           }
 
           if (warnings.length > 0) {
-            errorDiv.style.display = "block";
+            errorDiv.classList.remove("hidden");
             errorDiv.textContent = "Warning: " + warnings.join("; ") + ". You can still continue, but these features may not work properly.";
           }
 
           return true;
         } catch (error) {
-          errorDiv.style.display = "block";
-          errorDiv.textContent =
-            "Failed to validate API keys: " + error.message;
+          errorDiv.classList.remove("hidden");
+          errorDiv.textContent = "Failed to validate API keys: " + error.message;
           return false;
         }
       }
 
-      async function generateUrl(event) {
-        if (event) {
-          event.preventDefault();
-        }
+      async function openInstallFlow(event) {
+        if (event) event.preventDefault();
         const urls = await getAddonUrl();
-        if (urls) {
-          window.location.href = urls.stremio;
-        }
+        if (urls) showInstallModal(urls.https);
       }
 
-      async function copyUrl(event) {
-        if (event) {
-          event.preventDefault();
-        }
-        const urls = await getAddonUrl();
-        if (!urls) return;
-
-        const manualUrlDiv = document.getElementById("manual-url");
-        const feedbackDiv = document.getElementById("copy-feedback");
-
-        try {
-          await navigator.clipboard.writeText(urls.https);
-
-          // Show feedback
-          feedbackDiv.style.display = "block";
-          setTimeout(() => {
-            feedbackDiv.style.display = "none";
-          }, 2000);
-
-          // Show manual URL
-          manualUrlDiv.style.display = "block";
-          manualUrlDiv.textContent = `Manual installation URL (if needed):\n${urls.https}`;
-        } catch (err) {
-          // Fallback for clipboard API failure
-          manualUrlDiv.style.display = "block";
-          manualUrlDiv.textContent = `Copy this URL manually:\n${urls.https}`;
-        }
-      }
-      // Show/hide RPDB poster type dropdown based on API key presence
-      // REMOVED this listener as visibility is now controlled by the checkbox
-      /*
-      document.getElementById("rpdbKey").addEventListener("input", function () {
-        // ... old logic ...
-      });
-      */
-
-      // Update input change handlers to not automatically clear errors
       document.getElementById("geminiKey").addEventListener("input", () => {
-        document.getElementById("manual-url").style.display = "none";
+        updateInstallButtonState();
       });
       document.getElementById("tmdbKey").addEventListener("input", () => {
-        document.getElementById("manual-url").style.display = "none";
+        updateInstallButtonState();
       });
-      document.getElementById("rpdbKey").addEventListener("input", () => {
-        document.getElementById("manual-url").style.display = "none";
-      });
-      document.getElementById("numResults").addEventListener("input", () => {
-        document.getElementById("manual-url").style.display = "none";
-      });
-      // NEW: Add listener for the RPDB enable checkbox
-      document
-        .getElementById("enableRpdbPosters")
-        .addEventListener("change", () => {
-          document.getElementById("manual-url").style.display = "none";
-        });
-      // RESTORED: Add listener for enableAiCache
-      document
-        .getElementById("enableAiCache")
-        .addEventListener("change", () => {
-          document.getElementById("manual-url").style.display = "none";
-        });
-      // RESTORED: Add listener for rpdbPosterType
-      document
-        .getElementById("rpdbPosterType")
-        .addEventListener("change", () => {
-          document.getElementById("manual-url").style.display = "none";
-        });
-      // RESTORED: Add listener for traktAccessToken
-      const traktAccessToken = document.getElementById("traktAccessToken");
-      if (traktAccessToken) {
-        traktAccessToken.addEventListener("input", () => {
-          document.getElementById("manual-url").style.display = "none";
-        });
-      }
 
       function toggleHomepageQueryVisibility() {
         const enableHomepage = document.getElementById('enableHomepage').checked;
@@ -1511,112 +1238,68 @@
         homepageQueryGroup.style.display = enableHomepage ? 'block' : 'none';
       }
 
-      // Initialize the advanced section to be hidden on page load
       document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("advancedOptions").style.display = "none";
 
-        // Show/hide advanced options when checkbox is clicked
-        document
-          .getElementById("showAdvancedOptions")
-          .addEventListener("change", function () {
+        document.getElementById("showAdvancedOptions").addEventListener("change", function () {
             const advancedSection = document.getElementById("advancedOptions");
-            advancedSection.style.display = this.checked ? "block" : "none";
-          });
+            if (this.checked) {
+                advancedSection.style.display = "block";
+                advancedSection.classList.add("animate-slide-up");
+            } else {
+                advancedSection.style.display = "none";
+            }
+        });
 
-        // Show/hide homepage query input based on checkbox state
-        toggleHomepageQueryVisibility(); // Set initial state on load
+        toggleHomepageQueryVisibility();
         document.getElementById('enableHomepage').addEventListener('change', toggleHomepageQueryVisibility);
 
-         // Check if we're in edit mode (URL contains a config ID)
          const path = window.location.pathname;
          const isDirectAccess = path === "/configure";
-         const configIdMatch = isDirectAccess
-           ? null
-           : path.match(/\/([^\/]+)\/configure$/);
+         const configIdMatch = isDirectAccess ? null : path.match(/\/([^\/]+)\/configure$/);
 
          if (!isDirectAccess && configIdMatch) {
-           // Get the config ID from the capture group
            const configId = configIdMatch[1];
-           console.log("Editing existing configuration:", configId);
-
-            // Fix image paths when in edit mode
+           
             const basePath = "";
             document.querySelector(".logo").src = `${basePath}/logo.png`;
-            const bmcImg = document.querySelector(".bmc-button img");
+            const bmcImg = document.querySelector("a[href*='buymeacoffee'] img");
             if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
 
-           // Set the config ID to a hidden field
            document.getElementById("existingConfigId").value = configId;
 
-            // Load the existing configuration
             const baseUrl = window.location.origin;
             const apiPath = "";
-            console.log(
-              "Fetching config from:",
-              `${baseUrl}${apiPath}/api/getConfig/${configId}`
-            );
-
+            
             fetch(`${baseUrl}${apiPath}/api/getConfig/${configId}`)
             .then((response) => {
-              console.log(
-                "Config fetch response:",
-                response.status,
-                response.statusText
-              );
-              if (!response.ok) {
-                throw new Error(
-                  `Failed to load configuration: ${response.status}`
-                );
-              }
+              if (!response.ok) throw new Error(`Failed to load configuration: ${response.status}`);
               return response.json();
             })
             .then((config) => {
-              console.log("Loaded configuration:", config);
-
-              // Pre-fill the form with the existing configuration
-              if (config.GeminiApiKey)
-                document.getElementById("geminiKey").value =
-                  config.GeminiApiKey;
-              if (config.TmdbApiKey)
-                document.getElementById("tmdbKey").value = config.TmdbApiKey;
-              if (config.RpdbApiKey) {
-                document.getElementById("rpdbKey").value = config.RpdbApiKey;
-              }
-              if (config.FanartApiKey) {
-                document.getElementById("fanartKey").value = config.FanartApiKey;
-              }
-              if (config.RpdbPosterType)
-                document.getElementById("rpdbPosterType").value =
-                  config.RpdbPosterType;
-              if (config.TmdbLanguage)
-                document.getElementById("tmdbLanguage").value =
-                  config.TmdbLanguage;
-              if (config.NumResults)
-                document.getElementById("numResults").value = config.NumResults;
-              if (config.EnableAiCache !== undefined)
-                document.getElementById("enableAiCache").checked =
-                  config.EnableAiCache;
-              if (config.GeminiModel)
-                document.getElementById("geminiModel").value =
-                  config.GeminiModel;
+              if (config.GeminiApiKey) document.getElementById("geminiKey").value = config.GeminiApiKey;
+              if (config.TmdbApiKey) document.getElementById("tmdbKey").value = config.TmdbApiKey;
+              if (config.RpdbApiKey) document.getElementById("rpdbKey").value = config.RpdbApiKey;
+              if (config.FanartApiKey) document.getElementById("fanartKey").value = config.FanartApiKey;
+              if (config.RpdbPosterType) document.getElementById("rpdbPosterType").value = config.RpdbPosterType;
+              if (config.TmdbLanguage) document.getElementById("tmdbLanguage").value = config.TmdbLanguage;
+              if (config.NumResults) document.getElementById("numResults").value = config.NumResults;
+              if (config.EnableAiCache !== undefined) document.getElementById("enableAiCache").checked = config.EnableAiCache;
+              if (config.GeminiModel) document.getElementById("geminiModel").value = config.GeminiModel;
+              
               if (config.EnableRpdb !== undefined) {
-                document.getElementById("enableRpdbPosters").checked =
-                  config.EnableRpdb;
+                document.getElementById("enableRpdbPosters").checked = config.EnableRpdb;
               } else {
-                // Default to checked if RpdbApiKey exists but EnableRpdb flag is missing (older configs)
-                document.getElementById("enableRpdbPosters").checked =
-                  !!config.RpdbApiKey;
+                document.getElementById("enableRpdbPosters").checked = !!config.RpdbApiKey;
               }
+              
               if (config.EnableHomepage !== undefined) {
                 document.getElementById("enableHomepage").checked = config.EnableHomepage;
               } else {
-                // For older configs that don't have this setting, default it to true
                 document.getElementById("enableHomepage").checked = true;
               }
 
-              if (config.IncludeAdult !== undefined)
-                document.getElementById("includeAdult").checked =
-                  config.IncludeAdult;
+              if (config.IncludeAdult !== undefined) document.getElementById("includeAdult").checked = config.IncludeAdult;
 
               if (config.HomepageQuery) {
                   parseHomepageQuery(config.HomepageQuery);
@@ -1636,76 +1319,46 @@
                 document.getElementById("maxTurns").value = 6;
               }
 
-              // Call toggleRpdbFields *after* setting the checkbox state and API key
               setTimeout(toggleRpdbFields, 100);
 
-              // RESTORED: Load Trakt configuration if available and validate token
               if (config.traktUsername) {
-                // NEW CONFIG: User is already migrated.
-                console.log("Loading new config with traktUsername:", config.traktUsername);
                 document.getElementById("traktUsername").value = config.traktUsername;
-                // The validateAndRefreshTraktToken call later will handle the UI update.
-
               } else if (config.TraktAccessToken) {
-                // OLD CONFIG: User needs to migrate.
-                console.log("Detected old configuration with an access token.");
-                // We don't save the old token, as we want them to re-auth.
-                // Instead, we update the UI to inform them of the required action.
-                updateTraktStatus(
-                  "Re-Login with Trakt.tv to Update",
-                  "#e67e22", // An orange/warning color
-                  "<strong>Action Required:</strong> We've updated our Trakt integration for better reliability. Please click the button above to log in again and update your configuration."
-                );
+                updateTraktStatus("Re-Login with Trakt.tv to Update", "#e67e22");
               }
 
-              // Show advanced options if any are set (including the new checkbox)
               if (
-                config.RpdbApiKey ||
-                config.NumResults ||
-                config.EnableAiCache !== undefined ||
-                config.TraktAccessToken ||
-                config.GeminiModel ||
-                config.EnableRpdb // Check the new flag too
+                config.RpdbApiKey || config.NumResults || config.EnableAiCache !== undefined ||
+                config.TraktAccessToken || config.GeminiModel || config.EnableRpdb
               ) {
                 document.getElementById("showAdvancedOptions").checked = true;
-                document.getElementById("advancedOptions").style.display =
-                  "block";
+                document.getElementById("advancedOptions").style.display = "block";
               }
 
-              // Update the buttons to indicate we're editing
-              document.getElementById("configureBtn").textContent =
-                "Update Configuration in Stremio";
-              document.getElementById("copyBtn").textContent =
-                "Copy Updated URL";
               validateAndRefreshTraktToken();
+              updateInstallButtonState();
             })
             .catch((error) => {
-              console.error("Error loading configuration:", error);
               showError(`Error: ${error.message}`);
-              alert(
-                "Failed to load the existing configuration. Please try again or create a new one."
-              );
+              alert("Failed to load the existing configuration. Please try again or create a new one.");
              });
           } else {
-            // Direct access to /configure
-            // Fix image paths for direct access
             const basePath = "";
             document.querySelector(".logo").src = `${basePath}/logo.png`;
-            const bmcImg = document.querySelector(".bmc-button img");
+            const bmcImg = document.querySelector("a[href*='buymeacoffee'] img");
             if (bmcImg) bmcImg.src = `${basePath}/bmc.png`;
           }
       });
 
-window.addEventListener("message", async function (event) {
+      window.addEventListener("message", async function (event) {
         if (event.origin !== window.location.origin) return;
 
         if (event.data.type === "TRAKT_AUTH_SUCCESS") {
           const { access_token, refresh_token, expires_in } = event.data;
           
-          updateTraktStatus("Fetching user...", "#666", "Getting your Trakt.tv profile...");
+          updateTraktStatus("Fetching user...", "#666");
 
           try {
-            // New Step: Fetch the Trakt username
             const userResponse = await fetch("https://api.trakt.tv/users/me", {
               headers: {
                 "Content-Type": "application/json",
@@ -1715,32 +1368,20 @@ window.addEventListener("message", async function (event) {
               },
             });
 
-            if (!userResponse.ok) {
-              throw new Error("Failed to fetch Trakt user profile.");
-            }
+            if (!userResponse.ok) throw new Error("Failed to fetch Trakt user profile.");
 
             const userData = await userResponse.json();
             const username = userData.username;
 
-            // Store all auth data in hidden fields
             document.getElementById("traktAccessToken").value = access_token;
             document.getElementById("traktRefreshToken").value = refresh_token;
             document.getElementById("traktExpiresIn").value = expires_in;
             document.getElementById("traktUsername").value = username;
 
-            updateTraktStatus(
-              `Connected as ${username}`,
-              "#2a5a2a", // Green color for success
-              `Successfully connected as <strong>${username}</strong>! Click 'Configure Addon' below to save.`
-            );
+            updateTraktStatus(`Connected as ${username}`, "#10b981");
             toggleTraktDependentFields();
           } catch (error) {
-            console.error("Trakt user fetch error:", error);
-            updateTraktStatus(
-              "Authentication Error",
-              "#e74c3c", // Red color for error
-              "Could not verify your Trakt.tv account. Please try authenticating again."
-            );
+            updateTraktStatus("Authentication Error", "#ef4444");
           }
         }
       });
@@ -1748,43 +1389,27 @@ window.addEventListener("message", async function (event) {
       async function validateAndRefreshTraktToken() {
         const existingUsername = document.getElementById("traktUsername").value.trim();
 
-        // This function now only runs in edit mode if a username is already set.
         if (existingUsername) {
-            updateTraktStatus(
-                `Connected as ${existingUsername}`,
-                "#2a5a2a", // Green color
-                `Your addon is connected to Trakt.tv as <strong>${existingUsername}</strong>. To change accounts, use the login button again.`
-            );
+            updateTraktStatus(`Connected as ${existingUsername}`, "#10b981");
             toggleTraktDependentFields();
             return;
         }
 
         const traktAccessToken = document.getElementById("traktAccessToken").value;
         if (!traktAccessToken) {
-          updateTraktStatus(
-            "Login with Trakt.tv",
-            "#2a2a2a",
-            "Connect your Trakt.tv account to get personalized movie recommendations based on your watch history and ratings."
-          );
+          updateTraktStatus("Login with Trakt.tv", "#ed1c24");
           toggleTraktDependentFields();
         } else {
           toggleTraktDependentFields();
         }
       }
 
-      function updateTraktStatus(buttonText, buttonColor, helpText) {
+      function updateTraktStatus(buttonText, buttonColor) {
         const traktAuthBtn = document.getElementById("traktAuthBtn");
-        const traktHelpText = document.querySelector(
-          ".form-group:has(#traktAuthBtn) .help-text"
-        );
 
         if (traktAuthBtn) {
           traktAuthBtn.textContent = buttonText;
           traktAuthBtn.style.backgroundColor = buttonColor;
-        }
-
-        if (traktHelpText) {
-          traktHelpText.innerHTML = helpText;
         }
       }
 
@@ -1798,13 +1423,11 @@ window.addEventListener("message", async function (event) {
           numResults: document.getElementById("numResults").value,
           maxTurns: document.getElementById("maxTurns").value,
           enableAiCache: document.getElementById("enableAiCache").checked,
-          showAdvancedOptions: document.getElementById("showAdvancedOptions")
-            .checked,
+          showAdvancedOptions: document.getElementById("showAdvancedOptions").checked,
           geminiModel: document.getElementById("geminiModel").value,
           traktAccessToken: document.getElementById("traktAccessToken").value,
           traktRefreshToken: document.getElementById("traktRefreshToken").value,
-          enableRpdbPosters:
-            document.getElementById("enableRpdbPosters").checked,
+          enableRpdbPosters: document.getElementById("enableRpdbPosters").checked,
           enableHomepage: document.getElementById("enableHomepage").checked,
           homepageQuery: document.getElementById("homepageQuery").value,
           includeAdult: document.getElementById("includeAdult").checked,
@@ -1835,7 +1458,6 @@ window.addEventListener("message", async function (event) {
         );
       }
 
-      // Restore form data when page loads
       document.addEventListener("DOMContentLoaded", function () {
         const savedFormData = sessionStorage.getItem("formData");
         if (savedFormData) {
@@ -1843,27 +1465,17 @@ window.addEventListener("message", async function (event) {
           document.getElementById("geminiKey").value = formData.geminiKey || "";
           document.getElementById("tmdbKey").value = formData.tmdbKey || "";
           document.getElementById("rpdbKey").value = formData.rpdbKey || "";
-          document.getElementById("rpdbPosterType").value =
-            formData.rpdbPosterType || "poster-default";
-          document.getElementById("tmdbLanguage").value =
-            formData.tmdbLanguage || "en-US";
-          document.getElementById("numResults").value =
-            formData.numResults || "20";
-          document.getElementById("maxTurns").value =
-            formData.maxTurns || "6";
-          document.getElementById("enableAiCache").checked =
-            formData.enableAiCache !== false;
-          if (formData.geminiModel)
-            document.getElementById("geminiModel").value = formData.geminiModel;
+          document.getElementById("rpdbPosterType").value = formData.rpdbPosterType || "poster-default";
+          document.getElementById("tmdbLanguage").value = formData.tmdbLanguage || "en-US";
+          document.getElementById("numResults").value = formData.numResults || "20";
+          document.getElementById("maxTurns").value = formData.maxTurns || "6";
+          document.getElementById("enableAiCache").checked = formData.enableAiCache !== false;
+          if (formData.geminiModel) document.getElementById("geminiModel").value = formData.geminiModel;
 
-          // NEW: Restore RPDB checkbox state
-          document.getElementById("enableRpdbPosters").checked =
-            formData.enableRpdbPosters !== false; // Default to true if not explicitly false
-          // Call toggleRpdbFields *after* restoring state
+          document.getElementById("enableRpdbPosters").checked = formData.enableRpdbPosters !== false; 
           toggleRpdbFields();
-          // Restore Homepage recommendation state
-          document.getElementById("enableHomepage").checked =
-            formData.enableHomepage !== false;
+          
+          document.getElementById("enableHomepage").checked = formData.enableHomepage !== false;
           if (formData.homepageQuery) {
               parseHomepageQuery(formData.homepageQuery);
           } else {
@@ -1871,15 +1483,12 @@ window.addEventListener("message", async function (event) {
           }
           document.getElementById("includeAdult").checked = !!formData.includeAdult;
           document.getElementById("filterWatched").checked = formData.filterWatched !== false;
-          // Call toggleHomepageQueryVisibility *after* restoring state
           toggleHomepageQueryVisibility();
-          // Restore Trakt token if it exists
+          
           if (formData.traktAccessToken) {
-            document.getElementById("traktAccessToken").value =
-              formData.traktAccessToken;
+            document.getElementById("traktAccessToken").value = formData.traktAccessToken;
             if (formData.traktRefreshToken) {
-              document.getElementById("traktRefreshToken").value =
-                formData.traktRefreshToken;
+              document.getElementById("traktRefreshToken").value = formData.traktRefreshToken;
             }
             setTimeout(validateAndRefreshTraktToken, 100);
           }
@@ -1889,42 +1498,28 @@ window.addEventListener("message", async function (event) {
             document.getElementById("advancedOptions").style.display = "block";
           }
 
-          // Clear the saved form data
+          updateInstallButtonState();
           sessionStorage.removeItem("formData");
         }
       });
 
       function openIssueModal() {
         const modal = document.getElementById("issueModal");
-        modal.style.display = "block";
+        modal.classList.remove("hidden");
 
-        // Pre-fill error details if any
         const errorDiv = document.getElementById("error");
         const errorDetails = document.getElementById("errorDetails");
-        if (
-          errorDiv &&
-          errorDiv.style.display !== "none" &&
-          errorDiv.textContent
-        ) {
+        if (errorDiv && !errorDiv.classList.contains("hidden") && errorDiv.textContent) {
           errorDetails.value = errorDiv.textContent;
         }
       }
 
       function closeIssueModal() {
-        const modal = document.getElementById("issueModal");
-        modal.style.display = "none";
+        document.getElementById("issueModal").classList.add("hidden");
       }
 
-      // Close modal when clicking outside
-      window.onclick = function (event) {
-        const modal = document.getElementById("issueModal");
-        if (event.target === modal) {
-          closeIssueModal();
-        }
-      };
-
-      // Close modal when clicking X
-      document.querySelector(".close-modal").onclick = closeIssueModal;
+      document.querySelector("#issueModal .close-modal").onclick = closeIssueModal;
+      document.querySelector("#installModal .close-modal").onclick = hideInstallModal;
 
       function toggleIssueFields() {
         const feedbackType = document.getElementById("feedbackType").value;
@@ -1933,9 +1528,7 @@ window.addEventListener("message", async function (event) {
       }
 
       function updateCommentsValidation() {
-        const errorDetails = document
-          .getElementById("errorDetails")
-          .value.trim();
+        const errorDetails = document.getElementById("errorDetails").value.trim();
         const comments = document.getElementById("comments");
         const commentsRequired = document.getElementById("commentsRequired");
 
@@ -1955,59 +1548,39 @@ window.addEventListener("message", async function (event) {
         const feedbackContainer = document.getElementById("submitFeedback");
         submitButton.disabled = true;
         submitButton.textContent = "Submitting...";
-        feedbackContainer.style.display = "none";
+        feedbackContainer.classList.add("hidden");
 
         try {
           const feedbackType = document.getElementById("feedbackType").value;
-          const errorDetails = document
-            .getElementById("errorDetails")
-            .value.trim();
+          const errorDetails = document.getElementById("errorDetails").value.trim();
           const comments = document.getElementById("comments").value.trim();
 
-          // For ideas, we only require comments
           if (feedbackType === "idea" && !comments) {
-            showFeedback(
-              "Please provide details about your idea in the comments section",
-              false
-            );
+            showFeedback("Please provide details about your idea in the comments section", false);
             return;
           }
-          // For issues, we require either error details or comments
           if (feedbackType === "issue" && !errorDetails && !comments) {
-            showFeedback(
-              "Please provide either Error Details or Comments",
-              false
-            );
+            showFeedback("Please provide either Error Details or Comments", false);
             return;
           }
 
           let recaptchaToken;
           try {
-            // Wait for reCAPTCHA token with better error handling
             recaptchaToken = await new Promise((resolve) => {
               if (typeof grecaptcha === "undefined") {
-                console.warn(
-                  "reCAPTCHA not loaded, proceeding without verification"
-                );
                 resolve(null);
                 return;
               }
               grecaptcha.ready(async () => {
                 try {
-                  const token = await grecaptcha.execute(
-                    "6LcUAMAsAAAAAM2vbAOcZK4VqPJ9xmBSYTi5VSUa",
-                    { action: "submit_issue" }
-                  );
+                  const token = await grecaptcha.execute("6LcUAMAsAAAAAM2vbAOcZK4VqPJ9xmBSYTi5VSUa", { action: "submit_issue" });
                   resolve(token);
                 } catch (error) {
-                  console.warn("reCAPTCHA error:", error);
-                  // Proceed without reCAPTCHA if there's an error
                   resolve(null);
                 }
               });
             });
           } catch (error) {
-            console.warn("Failed to get reCAPTCHA token:", error);
             recaptchaToken = null;
           }
 
@@ -2015,46 +1588,33 @@ window.addEventListener("message", async function (event) {
             feedbackType: feedbackType,
             title: document.getElementById("issueTitle").value.trim(),
             deviceType: document.getElementById("deviceType").value,
-            browserType:
-              document.getElementById("deviceType").value === "web"
-                ? document.getElementById("browserType").value
-                : null,
+            browserType: document.getElementById("deviceType").value === "web" ? document.getElementById("browserType").value : null,
             errorDetails,
             comments,
             recaptchaToken: recaptchaToken,
           };
 
-           console.log("Submitting form data:", formData);
-
             const response = await fetch(`/submit-issue`, {
              method: "POST",
-             headers: {
-               "Content-Type": "application/json",
-             },
+             headers: { "Content-Type": "application/json" },
              body: JSON.stringify(formData),
            });
 
           const responseData = await response.json();
-          console.log("Server response:", responseData);
 
           if (!response.ok) {
-            throw new Error(
-              responseData.error ||
-                "Failed to submit feedback. Please try again."
-            );
+            throw new Error(responseData.error || "Failed to submit feedback. Please try again.");
           }
 
-          // Show success message
           showFeedback(
-            `<p style="margin-bottom: 15px;">Thank you for your ${feedbackType}. Your feedback has been successfully submitted.</p>${
+            `<p class="mb-3">Thank you for your ${feedbackType}. Your feedback has been successfully submitted.</p>${
               responseData.issueUrl
-                ? `<p style="margin-bottom: 10px;">You can track the status of your ${feedbackType} at: <a href="${responseData.issueUrl}" target="_blank">${responseData.issueUrl}</a></p>`
-                : `<p style="margin-bottom: 0;">You can track all issues and ideas at <a href="https://github.com/your-org/stremio-ai-search/issues" target="_blank">GitHub Issues</a></p>`
+                ? `<p>You can track the status of your ${feedbackType} at: <a href="${responseData.issueUrl}" target="_blank" class="text-brand-400 underline">${responseData.issueUrl}</a></p>`
+                : `<p>You can track all issues and ideas at <a href="https://github.com/your-org/stremio-ai-search/issues" target="_blank" class="text-brand-400 underline">GitHub Issues</a></p>`
             }`,
             true
           );
 
-          // Clear form fields
           document.getElementById("feedbackType").value = "issue";
           document.getElementById("issueTitle").value = "";
           document.getElementById("deviceType").value = "windows";
@@ -2062,12 +1622,7 @@ window.addEventListener("message", async function (event) {
           document.getElementById("errorDetails").value = "";
           document.getElementById("comments").value = "";
         } catch (error) {
-          console.error("Submission error:", error);
-          showFeedback(
-            error.message ||
-              "An error occurred while submitting your feedback. Please try again.",
-            false
-          );
+          showFeedback(error.message || "An error occurred while submitting your feedback. Please try again.", false);
         } finally {
           submitButton.disabled = false;
           submitButton.textContent = "Submit";
@@ -2077,112 +1632,70 @@ window.addEventListener("message", async function (event) {
       function showFeedback(message, isSuccess) {
         const feedbackContainer = document.getElementById("submitFeedback");
         feedbackContainer.innerHTML = message;
-        feedbackContainer.className =
-          "feedback-container " +
-          (isSuccess ? "feedback-success" : "feedback-error");
-        feedbackContainer.style.display = "block";
+        feedbackContainer.className = "p-4 rounded-lg text-sm text-center " + (isSuccess ? "bg-green-500/10 text-green-400 border border-green-500/30" : "bg-red-500/10 text-red-400 border border-red-500/30");
+        feedbackContainer.classList.remove("hidden");
       }
 
-      // Initialize issue fields visibility
       document.addEventListener("DOMContentLoaded", function () {
         toggleIssueFields();
       });
 
       function toggleBrowserSelect() {
         const deviceType = document.getElementById("deviceType").value;
-        const browserContainer = document.getElementById(
-          "browserSelectContainer"
-        );
+        const browserContainer = document.getElementById("browserSelectContainer");
         const browserSelect = document.getElementById("browserType");
-        const otherDeviceMessage =
-          document.getElementById("otherDeviceMessage");
+        const otherDeviceMessage = document.getElementById("otherDeviceMessage");
 
         if (deviceType === "web") {
-          browserContainer.style.display = "block";
+          browserContainer.classList.remove("hidden");
           browserSelect.required = true;
-          otherDeviceMessage.style.display = "none";
+          otherDeviceMessage.classList.add("hidden");
         } else {
-          browserContainer.style.display = "none";
+          browserContainer.classList.add("hidden");
           browserSelect.required = false;
-          otherDeviceMessage.style.display =
-            deviceType === "other" ? "block" : "none";
+          if(deviceType === "other") {
+              otherDeviceMessage.classList.remove("hidden");
+          } else {
+              otherDeviceMessage.classList.add("hidden");
+          }
         }
       }
 
-      // Toggle RPDB fields based on checkbox and API key tier
       function toggleRpdbFields() {
         const enableRpdb = document.getElementById("enableRpdbPosters").checked;
         const rpdbKeyGroup = document.getElementById("rpdbKeyGroup");
-        const rpdbPosterTypeGroup = document.getElementById(
-          "rpdbPosterTypeGroup"
-        );
+        const rpdbPosterTypeGroup = document.getElementById("rpdbPosterTypeGroup");
         const rpdbKey = document.getElementById("rpdbKey").value.trim();
 
-        // Show/hide the key input field based on the checkbox
         rpdbKeyGroup.style.display = enableRpdb ? "block" : "none";
 
-        // Determine if we should show the poster type dropdown
-        // Only show if RPDB is enabled AND a valid non-tier-0 key is entered
-        const isTier0Key = rpdbKey.startsWith("t0-");
-        const isValidNonTier0Key = /^t[1-9]\d*-/.test(rpdbKey); // Matches t1-, t2-, etc.
+        const isValidNonTier0Key = /^t[1-9]\d*-/.test(rpdbKey); 
         const shouldShowPosterType = enableRpdb && isValidNonTier0Key;
 
-        // Always hide poster type by default, only show for valid non-t0 keys
-        rpdbPosterTypeGroup.style.display = shouldShowPosterType
-          ? "block"
-          : "none";
+        rpdbPosterTypeGroup.style.display = shouldShowPosterType ? "block" : "none";
 
-        // If using a tier 0 key or no key, set poster type to default
         if (!shouldShowPosterType && enableRpdb) {
           document.getElementById("rpdbPosterType").value = "poster-default";
         }
 
-        // Clear the key if disabled
         if (!enableRpdb) {
           document.getElementById("rpdbKey").value = "";
         }
 
-        // Clear the manual URL display when changing RPDB settings
-        document.getElementById("manual-url").style.display = "none";
       }
 
-      // Add event listener for the new checkbox
-      document
-        .getElementById("enableRpdbPosters")
-        .addEventListener("change", toggleRpdbFields);
+      document.getElementById("enableRpdbPosters").addEventListener("change", toggleRpdbFields);
+      document.getElementById("rpdbKey").addEventListener("input", toggleRpdbFields);
 
-      // Add event listener for the RPDB API key input to check tier
-      document
-        .getElementById("rpdbKey")
-        .addEventListener("input", toggleRpdbFields);
-
-      // Call toggleRpdbFields on load in case the checkbox is pre-checked (e.g., during edit)
       toggleRpdbFields();
 
-      // Ensure RPDB poster type is hidden initially
       document.addEventListener("DOMContentLoaded", function () {
-        // Hide the poster type by default
         document.getElementById("rpdbPosterTypeGroup").style.display = "none";
-
-        // Make sure toggleRpdbFields is called after loading configurations
-        const existingConfig =
-          document.getElementById("existingConfigId").value;
+        const existingConfig = document.getElementById("existingConfigId").value;
         if (existingConfig) {
-          // Wait a bit to ensure config has loaded before checking fields
           setTimeout(toggleRpdbFields, 500);
         }
       });
     </script>
-
-    <!-- Replace reCAPTCHA script -->
-    <script src="https://www.google.com/recaptcha/api.js?render=6LcUAMAsAAAAAM2vbAOcZK4VqPJ9xmBSYTi5VSUa"></script>
-
-    <!-- Add a hidden field to store the existing config ID -->
-    <input
-      type="hidden"
-      id="existingConfigId"
-      name="existingConfigId"
-      value=""
-    />
-  </body>
+</body>
 </html>

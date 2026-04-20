@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stremio AI Picks - Gemini-Powered Discovery for Stremio</title>
+    <meta name="description" content="Discover personalized movie and series picks in Stremio with Gemini AI, Trakt.tv history, and premium multilingual catalogs built around your taste every day.">
+    <meta name="robots" content="index, follow">
+
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Stremio AI Picks - Gemini-Powered Discovery for Stremio">
+    <meta property="og:description" content="Discover personalized movie and series picks in Stremio with Gemini AI, Trakt.tv history, and premium multilingual catalogs built around your taste every day.">
+    <meta property="og:image" content="bg.jpg">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Stremio AI Picks - Gemini-Powered Discovery for Stremio">
+    <meta name="twitter:description" content="Discover personalized movie and series picks in Stremio with Gemini AI, Trakt.tv history, and premium multilingual catalogs built around your taste every day.">
+    <meta name="twitter:image" content="bg.jpg">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Space Grotesk', 'sans-serif'],
+                        display: ['Bricolage Grotesque', 'sans-serif'],
+                    },
+                    colors: {
+                        void: '#030712',
+                        cyan: {
+                            400: '#22d3ee',
+                            500: '#06b6d4',
+                        },
+                        blue: {
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                        }
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-out',
+                        'slide-up': 'slideUp 0.5s ease-out',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root { color-scheme: dark; }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            background:
+                radial-gradient(circle at top left, rgba(34, 211, 238, 0.14), transparent 28%),
+                radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 26%),
+                radial-gradient(circle at bottom center, rgba(14, 165, 233, 0.08), transparent 34%),
+                #030712;
+            color: #f8fafc;
+            overflow-x: hidden;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 100% 92px, 92px 100%;
+            mask-image: radial-gradient(circle at center, black 0%, transparent 84%);
+            opacity: 0.22;
+        }
+        body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(180deg, rgba(3, 7, 18, 0.14), rgba(3, 7, 18, 0.64));
+        }
+        main, header, footer { position: relative; z-index: 1; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+        }
+        .glass-card:hover { border-color: rgba(255, 255, 255, 0.1); }
+        .hero-title {
+            font-family: 'Bricolage Grotesque', sans-serif;
+            letter-spacing: -0.05em;
+            line-height: 0.92;
+        }
+        .section-kicker,
+        .hero-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: rgba(34, 211, 238, 0.84);
+        }
+        .reveal {
+            opacity: 0;
+            transform: translateY(18px);
+            animation: reveal 800ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+            animation-delay: var(--delay, 0ms);
+        }
+        @supports (animation-timeline: view()) {
+            .reveal {
+                animation-timeline: view();
+                animation-range: entry 8% cover 28%;
+            }
+        }
+        @keyframes reveal {
+            from { opacity: 0; transform: translateY(18px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(-7deg); }
+            50% { transform: translateY(-12px) rotate(-7deg); }
+        }
+        .poster-shell {
+            position: relative;
+            transform: perspective(1600px) rotateY(-10deg) rotateX(4deg) translateZ(0);
+            transition: transform 300ms ease, filter 300ms ease;
+        }
+        .poster-shell:hover {
+            transform: perspective(1600px) rotateY(-5deg) rotateX(2deg) translateY(-4px);
+        }
+        .poster-shell::before {
+            content: "";
+            position: absolute;
+            inset: auto 16% -12% 16%;
+            height: 34%;
+            background: radial-gradient(circle, rgba(34, 211, 238, 0.34), transparent 72%);
+            filter: blur(40px);
+            z-index: -1;
+        }
+        .poster-shell::after {
+            content: "";
+            position: absolute;
+            inset: -1px;
+            border-radius: 1.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            pointer-events: none;
+        }
+        .poster-image {
+            display: block;
+            width: 100%;
+            border-radius: 1.75rem;
+            box-shadow: 0 36px 80px rgba(0, 0, 0, 0.45);
+            animation: float 7s ease-in-out infinite;
+        }
+        .feature-card,
+        .step-card,
+        .stat-card,
+        .cta-card {
+            transition: transform 200ms ease, border-color 200ms ease, background-color 200ms ease, box-shadow 200ms ease;
+        }
+        .feature-card:hover,
+        .step-card:hover,
+        .stat-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+        }
+        .section-line {
+            background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.44), rgba(59, 130, 246, 0.44), transparent);
+        }
+        .footer-link {
+            transition: color 200ms ease, opacity 200ms ease, transform 200ms ease;
+        }
+        .footer-link:hover { transform: translateY(-1px); }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #030712; }
+        ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.24); border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.36); }
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus,
+        input:-webkit-autofill:active {
+            -webkit-box-shadow: 0 0 0 30px #030712 inset !important;
+            -webkit-text-fill-color: #fff !important;
+            transition: background-color 5000s ease-in-out 0s;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            html { scroll-behavior: auto; }
+            *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+            .reveal { opacity: 1; transform: none; }
+            .poster-image { animation: none; }
+        }
+        @media (max-width: 640px) {
+            .poster-shell { transform: none; }
+            .poster-image { animation: none; }
+        }
+    </style>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Stremio AI Picks",
+      "operatingSystem": "Any",
+      "applicationCategory": "EntertainmentApplication",
+      "description": "AI-powered movie and series recommendations addon for Stremio, utilizing Google Gemini AI and Trakt.tv integration.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
+</head>
+<body class="antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div aria-hidden="true" class="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div class="absolute -left-20 top-10 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl"></div>
+        <div class="absolute right-0 top-24 h-80 w-80 rounded-full bg-blue-500/10 blur-3xl"></div>
+        <div class="absolute bottom-0 left-1/2 h-96 w-[32rem] -translate-x-1/2 rounded-full bg-cyan-400/5 blur-3xl"></div>
+    </div>
+
+    <header class="fixed inset-x-0 top-0 z-50 border-b border-white/5 bg-void/80 backdrop-blur-xl">
+        <div class="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
+            <a href="#top" class="group flex items-center gap-3">
+                <div class="relative">
+                    <div class="absolute inset-0 rounded-xl bg-cyan-400/30 blur-md opacity-50 transition-opacity group-hover:opacity-80"></div>
+                    <img src="logo.png" alt="Stremio AI Picks logo" class="relative h-10 w-10 rounded-xl border border-white/10 object-cover">
+                </div>
+                <div class="hidden sm:block">
+                    <div class="font-display text-lg font-bold tracking-tight text-white">Stremio AI Picks</div>
+                    <div class="text-xs tracking-[0.22em] text-white/35 uppercase">Gemini discovery engine</div>
+                </div>
+            </a>
+
+            <nav aria-label="Primary" class="hidden md:flex items-center gap-8 text-sm text-white/55">
+                <a href="#features" class="transition-colors hover:text-white">Features</a>
+                <a href="#how-it-works" class="transition-colors hover:text-white">How it works</a>
+                <a href="#trust" class="transition-colors hover:text-white">Trust</a>
+            </nav>
+
+            <a href="/configure" class="inline-flex items-center justify-center rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2.5 text-sm font-semibold text-cyan-100 transition-all duration-200 hover:border-cyan-400/50 hover:bg-cyan-400/15 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-void">
+                Get Started
+            </a>
+        </div>
+    </header>
+
+    <main id="top" class="mx-auto w-full max-w-7xl px-6 pt-32 pb-20 lg:pt-40">
+        <section class="reveal grid items-center gap-14 lg:grid-cols-12 lg:gap-12">
+            <div class="lg:col-span-7">
+                <div class="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-4 py-2 text-xs font-semibold tracking-[0.22em] text-cyan-300 uppercase">
+                    <span class="h-2 w-2 rounded-full bg-cyan-400 shadow-[0_0_18px_rgba(34,211,238,0.8)]"></span>
+                    Gemini-powered Stremio addon
+                </div>
+
+                <h1 class="hero-title mt-6 text-4xl font-bold text-white sm:text-6xl lg:text-7xl xl:text-[5.4rem]">
+                    <span class="block">Your next favorite movie</span>
+                    <span class="block bg-gradient-to-r from-white via-cyan-200 to-cyan-500 bg-clip-text text-transparent">is already waiting.</span>
+                </h1>
+
+                <p class="mt-6 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
+                    Gemini reads your taste, Trakt.tv sharpens the signal, and Stremio becomes a premium discovery surface with catalogs that feel hand-picked for you.
+                </p>
+
+                <div class="mt-8 flex flex-col gap-4 sm:flex-row">
+                    <a href="/configure" class="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 px-7 py-3.5 font-semibold text-void shadow-[0_16px_40px_rgba(34,211,238,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_48px_rgba(34,211,238,0.28)] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-void">
+                        Get Started
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg>
+                    </a>
+                    <a href="https://github.com/EremesNG/stremio-ai-picks" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-7 py-3.5 font-semibold text-white/85 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-void">
+                        View on GitHub
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12.02c0 4.42 2.87 8.18 6.84 9.5.5.09.68-.22.68-.48 0-.24-.01-.87-.01-1.7-2.78.61-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03.8-.23 1.67-.34 2.5-.34s1.7.11 2.5.34c1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.85-2.34 4.7-4.56 4.94.36.31.68.92.68 1.86 0 1.34-.01 2.42-.01 2.75 0 .26.18.58.69.48A10.02 10.02 0 0 0 22 12.02C22 6.48 17.52 2 12 2z"/></svg>
+                    </a>
+                </div>
+
+                <div class="mt-8 flex flex-wrap gap-3 text-xs font-medium text-white/55">
+                    <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2">Trakt-aware</span>
+                    <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2">10+ languages</span>
+                    <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2">Open source</span>
+                </div>
+            </div>
+
+            <div class="reveal lg:col-span-5" style="--delay: 120ms;">
+                <div class="poster-shell mx-auto max-w-xl">
+                    <div class="absolute left-5 top-5 z-10 inline-flex items-center gap-2 rounded-full border border-white/10 bg-void/70 px-3 py-1.5 text-xs font-semibold text-white/80 shadow-2xl backdrop-blur-md">
+                        <span class="h-2 w-2 rounded-full bg-cyan-400"></span>
+                        Live homepage preview
+                    </div>
+                    <img src="posters-perspective-home.png" alt="Stremio AI Picks homepage preview with cinematic poster rows" class="poster-image" loading="eager" decoding="async">
+                </div>
+            </div>
+        </section>
+
+        <section id="features" class="reveal scroll-mt-28 py-24 lg:py-28" style="--delay: 180ms;">
+            <div class="mb-12 max-w-3xl">
+                <p class="section-kicker">Why it feels premium</p>
+                <h2 class="mt-4 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-6xl">
+                    Built like a carefully edited homepage, not a generic grid.
+                </h2>
+                <p class="mt-5 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
+                    Every surface is tuned for clarity, spacing, and confidence — so the addon feels like part of Stremio, only smarter and more personal.
+                </p>
+            </div>
+
+            <div class="grid gap-5 lg:grid-cols-12">
+                <article class="feature-card glass-card reveal relative overflow-hidden rounded-2xl p-7 lg:col-span-7 lg:min-h-[18rem]" style="--delay: 240ms;">
+                    <div class="absolute right-0 top-0 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl"></div>
+                    <div class="flex items-start gap-4">
+                        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m13 10-8 8m1-7 6 6m8-15 3 3-9 9-4 1 1-4 9-9Z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="font-display text-2xl font-bold text-white">AI-Powered Recommendations</h3>
+                            <p class="mt-3 max-w-2xl text-sm leading-7 text-slate-300 sm:text-[0.96rem]">
+                                Gemini analyzes themes, tone, pacing, and mood — then turns your watch history into suggestions that feel specific instead of algorithmic.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="mt-7 flex flex-wrap gap-3 text-xs font-medium text-white/60">
+                        <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2">Theme matching</span>
+                        <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2">Taste memory</span>
+                        <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2">Gemini reasoning</span>
+                    </div>
+                </article>
+
+                <article class="feature-card glass-card reveal relative overflow-hidden rounded-2xl p-7 lg:col-span-5" style="--delay: 300ms;">
+                    <div class="absolute right-0 top-0 h-36 w-36 rounded-full bg-blue-500/10 blur-3xl"></div>
+                    <div class="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-400/10 text-blue-300">
+                        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3M4 11h16M5 21h14a1 1 0 0 0 1-1V7H4v13a1 1 0 0 0 1 1Z"/></svg>
+                    </div>
+                    <h3 class="mt-5 font-display text-2xl font-bold text-white">Trakt.tv Integration</h3>
+                    <p class="mt-3 text-sm leading-7 text-slate-300 sm:text-[0.96rem]">
+                        Your watch history and ratings become a quiet memory layer, removing repeats and sharpening every new recommendation.
+                    </p>
+                </article>
+
+                <article class="feature-card glass-card reveal relative overflow-hidden rounded-2xl p-7 lg:col-span-5" style="--delay: 360ms;">
+                    <div class="absolute right-0 top-0 h-36 w-36 rounded-full bg-cyan-500/10 blur-3xl"></div>
+                    <div class="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h10M4 18h16"/></svg>
+                    </div>
+                    <h3 class="mt-5 font-display text-2xl font-bold text-white">Personalized Catalogs</h3>
+                    <p class="mt-3 text-sm leading-7 text-slate-300 sm:text-[0.96rem]">
+                        Build custom homepage rows that feel editorial and intentional, not mechanical — a shelf that reflects what you actually want to watch.
+                    </p>
+                </article>
+
+                <article class="feature-card glass-card reveal relative overflow-hidden rounded-2xl p-7 lg:col-span-7" style="--delay: 420ms;">
+                    <div class="absolute right-0 top-0 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl"></div>
+                    <div class="flex items-start gap-4">
+                        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-400/10 text-blue-300">
+                            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a8 8 0 1 0-8-8m8 8a8 8 0 1 0 8-8m-8 8V3"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="font-display text-2xl font-bold text-white">Multi-Language Support</h3>
+                            <p class="mt-3 max-w-2xl text-sm leading-7 text-slate-300 sm:text-[0.96rem]">
+                                Search and browse in 10+ languages with localized titles and metadata that keep the experience natural wherever you are.
+                            </p>
+                        </div>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <section id="how-it-works" class="reveal scroll-mt-28 py-24 lg:py-28" style="--delay: 480ms;">
+            <div class="mb-12 max-w-3xl">
+                <p class="section-kicker">How it works</p>
+                <h2 class="mt-4 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-6xl">
+                    Three steps, then the catalog starts feeling alive.
+                </h2>
+            </div>
+
+            <div class="relative">
+                <div class="section-line absolute left-8 right-8 top-12 hidden h-px lg:block"></div>
+                <div class="grid gap-5 lg:grid-cols-3">
+                    <article class="step-card glass-card reveal rounded-2xl p-7" style="--delay: 540ms;">
+                        <div class="inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                            <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 13a8 8 0 0 1 8-8h8M4 13a8 8 0 0 0 8 8h8M4 13h16"/></svg>
+                        </div>
+                        <div class="mt-6 flex items-center gap-3">
+                            <span class="font-display text-sm font-bold tracking-[0.2em] text-cyan-300">01</span>
+                            <h3 class="font-display text-2xl font-bold text-white">Configure</h3>
+                        </div>
+                        <p class="mt-3 text-sm leading-7 text-slate-300">
+                            Add your keys, connect Trakt, and tune the model and homepage rows to match the way you browse.
+                        </p>
+                    </article>
+
+                    <article class="step-card glass-card reveal rounded-2xl p-7" style="--delay: 600ms;">
+                        <div class="inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-400/10 text-blue-300">
+                            <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16v10H4zM8 17v3m8-3v3"/></svg>
+                        </div>
+                        <div class="mt-6 flex items-center gap-3">
+                            <span class="font-display text-sm font-bold tracking-[0.2em] text-blue-300">02</span>
+                            <h3 class="font-display text-2xl font-bold text-white">Install</h3>
+                        </div>
+                        <p class="mt-3 text-sm leading-7 text-slate-300">
+                            Generate the encrypted install URL and drop it into Stremio — no messy setup, just a clean handoff.
+                        </p>
+                    </article>
+
+                    <article class="step-card glass-card reveal rounded-2xl p-7" style="--delay: 660ms;">
+                        <div class="inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                            <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m8.49-8.49h-3M6.51 12h-3M17.66 6.34l-2.12 2.12M8.46 15.54l-2.12 2.12M17.66 17.66l-2.12-2.12M8.46 8.46 6.34 6.34"/></svg>
+                        </div>
+                        <div class="mt-6 flex items-center gap-3">
+                            <span class="font-display text-sm font-bold tracking-[0.2em] text-cyan-300">03</span>
+                            <h3 class="font-display text-2xl font-bold text-white">Discover</h3>
+                        </div>
+                        <p class="mt-3 text-sm leading-7 text-slate-300">
+                            Open Stremio and browse catalogs that feel tailored, current, and surprisingly precise from the first search.
+                        </p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section id="trust" class="reveal scroll-mt-28 py-20 lg:py-24" style="--delay: 720ms;">
+            <div class="mb-10 max-w-3xl">
+                <p class="section-kicker">Trust signals</p>
+                <h2 class="mt-4 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl">
+                    Small facts that build big confidence.
+                </h2>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <article class="stat-card glass-card reveal rounded-2xl p-6" style="--delay: 780ms;">
+                    <div class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.9 6.3L21 10l-5 4.8L17.2 22 12 18.8 6.8 22 8 14.8 3 10l6.1-1.7L12 2z"/></svg>
+                    </div>
+                    <div class="mt-5 font-display text-3xl font-bold text-white">Gemini AI</div>
+                    <p class="mt-2 text-sm uppercase tracking-[0.18em] text-white/45">Powered by</p>
+                </article>
+
+                <article class="stat-card glass-card reveal rounded-2xl p-6" style="--delay: 840ms;">
+                    <div class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-400/10 text-blue-300">
+                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
+                    </div>
+                    <div class="mt-5 font-display text-3xl font-bold text-white">10+ Languages</div>
+                    <p class="mt-2 text-sm uppercase tracking-[0.18em] text-white/45">Localized discovery</p>
+                </article>
+
+                <article class="stat-card glass-card reveal rounded-2xl p-6" style="--delay: 900ms;">
+                    <div class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3V5a2 2 0 0 1 2-2z"/></svg>
+                    </div>
+                    <div class="mt-5 font-display text-3xl font-bold text-white">Trakt.tv</div>
+                    <p class="mt-2 text-sm uppercase tracking-[0.18em] text-white/45">Integrated</p>
+                </article>
+
+                <article class="stat-card glass-card reveal rounded-2xl p-6" style="--delay: 960ms;">
+                    <div class="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-400/10 text-blue-300">
+                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 22s8-4 8-10V6l-8-3-8 3v6c0 6 8 10 8 10z"/></svg>
+                    </div>
+                    <div class="mt-5 font-display text-3xl font-bold text-white">Open Source</div>
+                    <p class="mt-2 text-sm uppercase tracking-[0.18em] text-white/45">Transparent and forkable</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="reveal py-10 sm:py-16 lg:py-20" style="--delay: 1020ms;">
+            <div class="cta-card glass-card relative overflow-hidden rounded-[2rem] px-6 py-10 sm:px-10 sm:py-14 lg:px-14 lg:py-16">
+                <div class="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-blue-500/10"></div>
+                <div class="absolute -right-24 top-0 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl"></div>
+                <div class="absolute -left-24 bottom-0 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl"></div>
+                <div class="relative max-w-3xl">
+                    <p class="section-kicker">Final step</p>
+                    <h2 class="mt-4 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-6xl">
+                        Your next favorite movie is waiting.
+                    </h2>
+                    <p class="mt-5 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
+                        Open the configuration page and turn Stremio into a discovery engine that feels personal from the first catalog row.
+                    </p>
+                    <div class="mt-8">
+                        <a href="/configure" class="inline-flex items-center justify-center gap-2 rounded-full bg-white px-7 py-3.5 font-semibold text-void transition-all duration-200 hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-void">
+                            Configure Now
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="border-t border-white/10 bg-void">
+        <div class="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-10 md:flex-row md:items-end md:justify-between">
+            <div class="space-y-4">
+                <a href="#top" class="flex items-center gap-3">
+                    <img src="logo.png" alt="Stremio AI Picks logo" class="h-10 w-10 rounded-xl border border-white/10 object-cover">
+                    <div>
+                        <div class="font-display text-lg font-bold tracking-tight text-white">Stremio AI Picks</div>
+                        <div class="text-xs tracking-[0.2em] text-white/35 uppercase">Gemini discovery engine</div>
+                    </div>
+                </a>
+                <p class="max-w-lg text-sm leading-7 text-white/40">
+                    A premium, AI-powered Stremio addon for personalized movie and series discovery.
+                </p>
+                <p class="text-sm text-white/28">Not affiliated with Stremio, Trakt.tv, or Google.</p>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-5 text-sm">
+                <a href="https://github.com/EremesNG/stremio-ai-picks" target="_blank" rel="noopener noreferrer" class="footer-link text-white/55 hover:text-white">GitHub</a>
+                <a href="https://www.buymeacoffee.com/eremesng" target="_blank" rel="noopener noreferrer" class="footer-link inline-flex items-center gap-2 text-white/55 hover:text-white">
+                    <img src="bmc.png" alt="Buy Me a Coffee" class="h-6 w-auto rounded" loading="lazy" decoding="async">
+                    Buy Me a Coffee
+                </a>
+                <a href="/configure" class="footer-link text-white/55 hover:text-white">Configure</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
