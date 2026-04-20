@@ -232,6 +232,9 @@ async function startServer() {
       next();
     });
 
+    // Serve static files from public/ directory
+    app.use(express.static(path.join(__dirname, "public")));
+
     const addonRouter = require("express").Router();
     const routeHandlers = {
       manifest: (req, res, next) => {
@@ -255,6 +258,24 @@ async function startServer() {
     };
 
     ["/"].forEach((routePath) => {
+      // Serve index.html at root
+      addonRouter.get(routePath, (req, res) => {
+        (async () => {
+          try {
+            const indexPath = path.join(__dirname, "public", "index.html");
+            const html = await fs.promises.readFile(indexPath, "utf8");
+            res.setHeader("Content-Type", "text/html");
+            res.send(html);
+          } catch (error) {
+            logger.error("Error loading index page", {
+              error: error.message,
+              stack: error.stack,
+            });
+            res.status(500).send("Error loading index page");
+          }
+        })();
+      });
+
       addonRouter.get(routePath + "manifest.json", (req, res) => {
         const baseManifest = {
           ...setupManifest,
