@@ -123,29 +123,6 @@ const setupManifest = {
   configurationURL: `${HOST}${BASE_PATH}/configure`,
 };
 
-const getConfiguredManifest = (geminiKey, tmdbKey) => ({
-  ...setupManifest,
-  behaviorHints: {
-    configurable: false,
-  },
-  catalogs: [
-    {
-      type: "movie",
-      id: "aipicks.top",
-      name: "AI Movie Search",
-      extra: [{ name: "search", isRequired: true }],
-      isSearch: true,
-    },
-    {
-      type: "series",
-      id: "aipicks.top",
-      name: "AI Series Search",
-      extra: [{ name: "search", isRequired: true }],
-      isSearch: true,
-    },
-  ],
-});
-
 async function startServer() {
   try {
     initDb();
@@ -241,10 +218,6 @@ async function startServer() {
         next();
       },
       catalog: (req, res, next) => {
-        const searchParam = req.params.extra?.split("search=")[1];
-        const searchQuery = searchParam
-          ? decodeURIComponent(searchParam)
-          : req.query.search || "";
         next();
       },
       ping: (req, res) => {
@@ -572,25 +545,25 @@ async function startServer() {
       });
 
       // Add Trakt.tv OAuth callback endpoint
-      addonRouter.get(routePath + "oauth/callback", async (req, res) => {
-        try {
-          const { code, state } = req.query;
+       addonRouter.get(routePath + "oauth/callback", async (req, res) => {
+         try {
+           const { code } = req.query;
           const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0].trim();
           const forwardedHost = req.get("x-forwarded-host")?.split(",")[0].trim();
           const requestOrigin = `${forwardedProto || req.protocol}://${forwardedHost || req.get("host")}`;
 
-          if (!code) {
-            return res.status(400).send(`
-              <html>
-                <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
-                  <h2>Authentication Failed</h2>
-                  <p>No authorization code received from Trakt.tv</p>
-                  <script>
-                    window.close();
-                  </script>
-                </body>
-              </html>
-            `);
+           if (!code) {
+             return res.status(400).send(`
+               <html lang="en">
+                 <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
+                   <h2>Authentication Failed</h2>
+                   <p>No authorization code received from Trakt.tv</p>
+                   <script>
+                     window.close();
+                   </script>
+                 </body>
+               </html>
+             `);
           }
 
           // Exchange the code for an access token
@@ -628,26 +601,26 @@ async function startServer() {
 
           const tokenData = await tokenResponse.json();
 
-          // Send the token data back to the parent window
-          res.send(`
-            <html>
-              <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
-                <h2>Authentication Successful</h2>
-                <p>You can close this window now.</p>
-                <script>
-                    if (window.opener) {
-                      window.opener.postMessage({
-                        type: "TRAKT_AUTH_SUCCESS",
-                        access_token: "${tokenData.access_token}",
-                        refresh_token: "${tokenData.refresh_token}",
-                        expires_in: ${tokenData.expires_in}
-                    }, "${requestOrigin}");
-                    window.close();
-                  }
-                </script>
-              </body>
-            </html>
-          `);
+           // Send the token data back to the parent window
+           res.send(`
+             <html lang="en">
+               <body style="background: #141414; color: #d9d9d9; font-family: Arial, sans-serif; text-align: center; padding: 20px;">
+                 <h2>Authentication Successful</h2>
+                 <p>You can close this window now.</p>
+                 <script>
+                     if (window.opener) {
+                       window.opener.postMessage({
+                         type: "TRAKT_AUTH_SUCCESS",
+                         access_token: "${tokenData.access_token}",
+                         refresh_token: "${tokenData.refresh_token}",
+                         expires_in: ${tokenData.expires_in}
+                     }, "${requestOrigin}");
+                     window.close();
+                   }
+                 </script>
+               </body>
+             </html>
+           `);
         } catch (error) {
           logger.error("OAuth callback error:", {
             error: error.message,
@@ -990,14 +963,14 @@ async function startServer() {
 
         if (format === "json") {
           res.json({ count });
-        } else if (format === "widget") {
-          res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Stremio AI Search Stats</title>
+         } else if (format === "widget") {
+           res.send(`
+             <!DOCTYPE html>
+             <html lang="en">
+             <head>
+               <meta charset="UTF-8">
+               <meta name="viewport" content="width=device-width, initial-scale=1.0">
+               <title>Stremio AI Search Stats</title>
               <style>
                 body {
                   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;

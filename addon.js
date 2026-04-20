@@ -2,7 +2,6 @@ const { addonBuilder } = require("stremio-addon-sdk");
 const { GoogleGenAI } = require("@google/genai");
 const fetch = require("node-fetch").default;
 const logger = require("./utils/logger");
-const path = require("path");
 const { decryptConfig } = require("./utils/crypto");
 const { withRetry } = require("./utils/apiRetry");
 const { runAgentLoop } = require("./utils/agent");
@@ -194,7 +193,6 @@ const similarContentCache = new SimpleLRUCache({
 const HOST = process.env.HOST
   ? `https://${process.env.HOST}`
   : "https://github.com/EremesNG/stremio-ai-picks";
-const PORT = 7000;
 const BASE_PATH = "";
 
 setInterval(() => {
@@ -484,7 +482,7 @@ function processRatings(ratedItems) {
 }
 
 // Process all preferences in parallel
-async function processPreferencesInParallel(watched, rated, history) {
+async function processPreferencesInParallel(watched, rated, _history) {
   const processingStart = Date.now();
 
   // Run all processing functions in parallel
@@ -600,12 +598,6 @@ function getTraktPageCount(response) {
   const pageCountHeader = response?.headers?.get("X-Pagination-Page-Count");
   const pageCount = Number.parseInt(pageCountHeader, 10);
   return Number.isFinite(pageCount) && pageCount > 0 ? pageCount : 1;
-}
-
-async function fetchTraktPage(endpoint, headers) {
-  const response = await makeApiCall(endpoint, headers);
-  const data = await response.json().catch(() => []);
-  return Array.isArray(data) ? data : [];
 }
 
 async function fetchTraktPaginatedCollection(endpoint, headers, operationLabel) {
@@ -746,7 +738,7 @@ async function fetchTraktWatchedAndRated(
   clientId,
   accessToken,
   type = "movies",
-  config = null
+  _config = null
 ) {
   logger.agent('TRAKT_FETCH_START', { mediaType: type, hasClientId: !!clientId, hasAccessToken: !!accessToken });
 
@@ -1698,10 +1690,6 @@ function isItemWatchedOrRated(item, watchHistory, ratedItems) {
       const historyName = media.title.toLowerCase().trim();
       const historyYear = parseInt(media.year);
 
-      const isMatch =
-        normalizedName === historyName &&
-        (!itemYear || !historyYear || itemYear === historyYear);
-
       // Debug logging for specific items (uncomment for troubleshooting)
       // if (normalizedName.includes("specific movie title") && isMatch) {
       //   logger.debug("Found match in watch history", {
@@ -1710,7 +1698,10 @@ function isItemWatchedOrRated(item, watchHistory, ratedItems) {
       //   });
       // }
 
-      return isMatch;
+      return (
+        normalizedName === historyName &&
+        (!itemYear || !historyYear || itemYear === historyYear)
+      );
     });
 
   // Check if the item exists in rated items
@@ -1724,10 +1715,6 @@ function isItemWatchedOrRated(item, watchHistory, ratedItems) {
       const ratedName = media.title.toLowerCase().trim();
       const ratedYear = parseInt(media.year);
 
-      const isMatch =
-        normalizedName === ratedName &&
-        (!itemYear || !ratedYear || itemYear === ratedYear);
-
       // Debug logging for specific items (uncomment for troubleshooting)
       // if (normalizedName.includes("specific movie title") && isMatch) {
       //   logger.debug("Found match in rated items", {
@@ -1736,7 +1723,10 @@ function isItemWatchedOrRated(item, watchHistory, ratedItems) {
       //   });
       // }
 
-      return isMatch;
+      return (
+        normalizedName === ratedName &&
+        (!itemYear || !ratedYear || itemYear === ratedYear)
+      );
     });
 
   return isWatched || isRated;
@@ -1746,7 +1736,7 @@ function isItemWatchedOrRated(item, watchHistory, ratedItems) {
  * Fetches the best available landscape thumbnail for recommendations.
  * Priority: 1) Fanart.tv moviethumb, 2) TMDB backdrop, 3) Fallback to portrait poster
  */
-async function getLandscapeThumbnail(tmdbData, imdbId, fanartApiKey, tmdbKey) {
+async function getLandscapeThumbnail(tmdbData, imdbId, fanartApiKey, _tmdbKey) {
   // 1. Try Fanart.tv first (best quality landscape thumbnails)
   if (fanartApiKey && imdbId) {
     try {
@@ -3364,7 +3354,6 @@ const catalogHandler = async function (args, req) {
 
     // Now check if it's a recommendation query
     const isRecommendation = isRecommendationQuery(searchQuery);
-    let discoveredType = type;
     let discoveredGenres = [];
     let traktData = null;
     let filteredTraktData = null;
@@ -4135,7 +4124,7 @@ const catalogHandler = async function (args, req) {
                   },
                 };
 
-                if (/2\.5|[3-9]\.\]/i.test(geminiModel)) {
+                if (/2\.5|[3-9]\.\d/i.test(geminiModel)) {
                   config.thinkingConfig = { thinkingBudget: 1024 };
                 }
 
