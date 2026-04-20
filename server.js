@@ -378,9 +378,9 @@ function startServer() {
               const decryptedStr = decryptConfig(encryptedConfig);
               decryptedConfig = JSON.parse(decryptedStr);
 
-              // If user is configured with Trakt, get and refresh tokens if needed
-              if (decryptedConfig.traktUsername) {
-                let tokenData = getTokens(decryptedConfig.traktUsername);
+               // If user is configured with Trakt, get and refresh tokens if needed
+               if (decryptedConfig.traktUsername) {
+                 let tokenData = await getTokens(decryptedConfig.traktUsername);
                 if (tokenData) {
                   // Check if token is expired (with a 5-minute buffer)
                   if (tokenData.expires_at < Date.now() - 5 * 60 * 1000) {
@@ -1326,9 +1326,9 @@ app.post("/validate", express.json(), async (req, res) => {
     // --- NEW TRAKT VALIDATION LOGIC ---
     let tokenToCheck = TraktAccessToken;
 
-    // If a username is provided, this is a health check. Get the token from the DB.
-    if (traktUsername) {
-      const tokenData = getTokens(traktUsername);
+     // If a username is provided, this is a health check. Get the token from the DB.
+     if (traktUsername) {
+       const tokenData = await getTokens(traktUsername);
       if (tokenData && tokenData.access_token) {
         tokenToCheck = tokenData.access_token;
       } else {
