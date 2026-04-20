@@ -272,6 +272,9 @@ const traktCache = new SimpleLRUCache({
   ttl: TRAKT_CACHE_DURATION,
 });
 
+// In-flight Trakt fetch locks to prevent cache stampedes
+const traktFetchLocks = new Map();
+
 // Cache for TMDB discover API results
 const tmdbDiscoverCache = new SimpleLRUCache({
   max: 1000,
@@ -774,179 +777,198 @@ async function fetchTraktWatchedAndRated(
 
   const rawCacheKey = `trakt_raw_${accessToken}_${type}`;
   const processedCacheKey = `trakt_${accessToken}_${type}`;
+  const fetchLockKey = processedCacheKey;
 
-  // Check if we have processed data in cache
-  if (traktCache.has(processedCacheKey)) {
-    const cached = traktCache.get(processedCacheKey);
-    logger.agent('TRAKT_CACHE_HIT', { cacheKey: processedCacheKey, watchedCount: cached?.data?.watched?.length, ratedCount: cached?.data?.rated?.length });
-    logger.info("Trakt processed cache hit", {
-      cacheKey: processedCacheKey,
+  if (traktFetchLocks.has(fetchLockKey)) {
+    logger.info("Waiting for in-flight Trakt fetch", {
+      cacheKey: fetchLockKey,
       type,
-      cachedAt: new Date(cached.timestamp).toISOString(),
-      age: `${Math.round((Date.now() - cached.timestamp) / 1000)}s`,
     });
-    return cached.data;
+    return await traktFetchLocks.get(fetchLockKey);
   }
 
-  // Check if we have raw data that needs updating
-  let rawData;
-  let isIncremental = false;
-
-  if (traktRawDataCache.has(rawCacheKey)) {
-    const cachedRaw = traktRawDataCache.get(rawCacheKey);
-    const lastUpdate = cachedRaw.lastUpdate || cachedRaw.timestamp;
-
-    // Always do incremental updates when cache exists, regardless of age
-    logger.info("Performing incremental Trakt update", {
-      cacheKey: rawCacheKey,
-      lastUpdate: new Date(lastUpdate).toISOString(),
-      age: `${Math.round((Date.now() - lastUpdate) / 1000)}s`,
-    });
-
-    try {
-      // Fetch only new data since last update
-      const newData = await fetchTraktIncrementalData(
-        clientId,
-        accessToken,
+  const fetchPromise = (async () => {
+    // Check if we have processed data in cache
+    if (traktCache.has(processedCacheKey)) {
+      const cached = traktCache.get(processedCacheKey);
+      logger.agent('TRAKT_CACHE_HIT', { cacheKey: processedCacheKey, watchedCount: cached?.data?.watched?.length, ratedCount: cached?.data?.rated?.length });
+      logger.info("Trakt processed cache hit", {
+        cacheKey: processedCacheKey,
         type,
-        lastUpdate
-      );
+        cachedAt: new Date(cached.timestamp).toISOString(),
+        age: `${Math.round((Date.now() - cached.timestamp) / 1000)}s`,
+      });
+      return cached.data;
+    }
 
-      // Merge with existing data
-      rawData = {
-        watched: mergeAndDeduplicate(newData.watched, cachedRaw.data.watched),
-        rated: mergeAndDeduplicate(newData.rated, cachedRaw.data.rated),
-        history: mergeAndDeduplicate(newData.history, cachedRaw.data.history),
-        lastUpdate: Date.now(),
-      };
+    // Check if we have raw data that needs updating
+    let rawData;
+    let isIncremental = false;
 
-      isIncremental = true;
+    if (traktRawDataCache.has(rawCacheKey)) {
+      const cachedRaw = traktRawDataCache.get(rawCacheKey);
+      const lastUpdate = cachedRaw.lastUpdate || cachedRaw.timestamp;
 
-      // Update raw data cache
-      traktRawDataCache.set(rawCacheKey, {
-        timestamp: Date.now(),
-        lastUpdate: Date.now(),
-        data: rawData,
+      // Always do incremental updates when cache exists, regardless of age
+      logger.info("Performing incremental Trakt update", {
+        cacheKey: rawCacheKey,
+        lastUpdate: new Date(lastUpdate).toISOString(),
+        age: `${Math.round((Date.now() - lastUpdate) / 1000)}s`,
       });
 
-      logger.info("Incremental Trakt update completed", {
-        newWatchedCount: newData.watched.length,
-        newRatedCount: newData.rated.length,
-        newHistoryCount: newData.history.length,
-        totalWatchedCount: rawData.watched.length,
-        totalRatedCount: rawData.rated.length,
-        totalHistoryCount: rawData.history.length,
-      });
-    } catch (error) {
-      logger.error(
-        "Incremental Trakt update failed, falling back to full refresh",
-        {
+      try {
+        // Fetch only new data since last update
+        const newData = await fetchTraktIncrementalData(
+          clientId,
+          accessToken,
+          type,
+          lastUpdate
+        );
+
+        // Merge with existing data
+        rawData = {
+          watched: mergeAndDeduplicate(newData.watched, cachedRaw.data.watched),
+          rated: mergeAndDeduplicate(newData.rated, cachedRaw.data.rated),
+          history: mergeAndDeduplicate(newData.history, cachedRaw.data.history),
+          lastUpdate: Date.now(),
+        };
+
+        isIncremental = true;
+
+        // Update raw data cache
+        traktRawDataCache.set(rawCacheKey, {
+          timestamp: Date.now(),
+          lastUpdate: Date.now(),
+          data: rawData,
+        });
+
+        logger.info("Incremental Trakt update completed", {
+          newWatchedCount: newData.watched.length,
+          newRatedCount: newData.rated.length,
+          newHistoryCount: newData.history.length,
+          totalWatchedCount: rawData.watched.length,
+          totalRatedCount: rawData.rated.length,
+          totalHistoryCount: rawData.history.length,
+        });
+      } catch (error) {
+        logger.error(
+          "Incremental Trakt update failed, falling back to full refresh",
+          {
+            error: error.message,
+          }
+        );
+        isIncremental = false;
+      }
+    }
+
+    // If we don't have raw data or incremental update failed, do a full refresh
+    if (!rawData) {
+      logger.info("Performing full Trakt data refresh", { type });
+
+      try {
+        const fetchStart = Date.now();
+        // Use the original fetch logic for a full refresh but without limits
+        const endpoints = [
+          `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full`,
+          `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full`,
+          `${TRAKT_API_BASE}/users/me/history/${type}?extended=full`,
+        ];
+
+        const headers = {
+          "Content-Type": "application/json",
+          "User-Agent": "stremio-ai-picks",
+          "trakt-api-version": "2",
+          "trakt-api-key": clientId,
+          Authorization: `Bearer ${accessToken}`,
+        };
+
+        const responses = await Promise.all(
+          endpoints.map((endpoint) =>
+            fetchTraktPaginatedCollection(endpoint, headers, "Trakt full refresh")
+              .catch((err) => {
+                logger.error("Trakt API Error:", {
+                  endpoint,
+                  error: err.message,
+                });
+                return [];
+              })
+          )
+        );
+
+        const fetchTime = Date.now() - fetchStart;
+        const [watched, rated, history] = responses;
+
+        rawData = {
+          watched: watched || [],
+          rated: rated || [],
+          history: history || [],
+          lastUpdate: Date.now(),
+        };
+
+        // Update raw data cache
+        traktRawDataCache.set(rawCacheKey, {
+          timestamp: Date.now(),
+          lastUpdate: Date.now(),
+          data: rawData,
+        });
+
+        logger.info("Full Trakt refresh completed", {
+          fetchTimeMs: fetchTime,
+          watchedCount: rawData.watched.length,
+          ratedCount: rawData.rated.length,
+          historyCount: rawData.history.length,
+        });
+      } catch (error) {
+        logger.agent('TRAKT_FETCH_FAILED', { reason: 'api_error_during_full_refresh', error: error?.message });
+        logger.error("Trakt API Error:", {
           error: error.message,
-        }
-      );
-      isIncremental = false;
+          stack: error.stack,
+        });
+        return null;
+      }
     }
+
+    // Process the data (raw or incrementally updated) in parallel
+    const processingStart = Date.now();
+    const preferences = await processPreferencesInParallel(
+      rawData.watched,
+      rawData.rated,
+      rawData.history
+    );
+    const processingTime = Date.now() - processingStart;
+
+    // Create the final result
+    const result = {
+      watched: rawData.watched,
+      rated: rawData.rated,
+      history: rawData.history,
+      preferences,
+      lastUpdate: rawData.lastUpdate,
+      isIncrementalUpdate: isIncremental,
+    };
+
+    // Cache the processed result
+    traktCache.set(processedCacheKey, {
+      timestamp: Date.now(),
+      data: result,
+    });
+
+    logger.info("Trakt data processing and caching completed", {
+      processingTimeMs: processingTime,
+      isIncremental: isIncremental,
+      cacheKey: processedCacheKey,
+    });
+
+    return result;
+  })();
+
+  traktFetchLocks.set(fetchLockKey, fetchPromise);
+
+  try {
+    return await fetchPromise;
+  } finally {
+    traktFetchLocks.delete(fetchLockKey);
   }
-
-  // If we don't have raw data or incremental update failed, do a full refresh
-  if (!rawData) {
-    logger.info("Performing full Trakt data refresh", { type });
-
-    try {
-      const fetchStart = Date.now();
-      // Use the original fetch logic for a full refresh but without limits
-      const endpoints = [
-        `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full`,
-        `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full`,
-        `${TRAKT_API_BASE}/users/me/history/${type}?extended=full`,
-      ];
-
-      const headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "stremio-ai-picks",
-        "trakt-api-version": "2",
-        "trakt-api-key": clientId,
-        Authorization: `Bearer ${accessToken}`,
-      };
-
-      const responses = await Promise.all(
-        endpoints.map((endpoint) =>
-          fetchTraktPaginatedCollection(endpoint, headers, "Trakt full refresh")
-            .catch((err) => {
-              logger.error("Trakt API Error:", {
-                endpoint,
-                error: err.message,
-              });
-              return [];
-            })
-        )
-      );
-
-      const fetchTime = Date.now() - fetchStart;
-      const [watched, rated, history] = responses;
-
-      rawData = {
-        watched: watched || [],
-        rated: rated || [],
-        history: history || [],
-        lastUpdate: Date.now(),
-      };
-
-      // Update raw data cache
-      traktRawDataCache.set(rawCacheKey, {
-        timestamp: Date.now(),
-        lastUpdate: Date.now(),
-        data: rawData,
-      });
-
-      logger.info("Full Trakt refresh completed", {
-        fetchTimeMs: fetchTime,
-        watchedCount: rawData.watched.length,
-        ratedCount: rawData.rated.length,
-        historyCount: rawData.history.length,
-      });
-    } catch (error) {
-      logger.agent('TRAKT_FETCH_FAILED', { reason: 'api_error_during_full_refresh', error: error?.message });
-      logger.error("Trakt API Error:", {
-        error: error.message,
-        stack: error.stack,
-      });
-      return null;
-    }
-  }
-
-  // Process the data (raw or incrementally updated) in parallel
-  const processingStart = Date.now();
-  const preferences = await processPreferencesInParallel(
-    rawData.watched,
-    rawData.rated,
-    rawData.history
-  );
-  const processingTime = Date.now() - processingStart;
-
-  // Create the final result
-  const result = {
-    watched: rawData.watched,
-    rated: rawData.rated,
-    history: rawData.history,
-    preferences,
-    lastUpdate: rawData.lastUpdate,
-    isIncrementalUpdate: isIncremental,
-  };
-
-  // Cache the processed result
-  traktCache.set(processedCacheKey, {
-    timestamp: Date.now(),
-    data: result,
-  });
-
-  logger.info("Trakt data processing and caching completed", {
-    processingTimeMs: processingTime,
-    isIncremental: isIncremental,
-    cacheKey: processedCacheKey,
-  });
-
-  return result;
 }
 
 async function searchTMDB(title, type, year, tmdbKey, language = "en-US", includeAdult = false) {

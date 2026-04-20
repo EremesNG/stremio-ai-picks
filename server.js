@@ -35,6 +35,7 @@ const {
 } = require("./utils/crypto");
 const { initDb, storeTokens, getTokens } = require("./database");
 const app = express();
+const traktRefreshLocks = new Map();
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -55,43 +56,56 @@ const validateAdminToken = (req, res, next) => {
 };
 
 async function refreshTraktToken(username, refreshToken) {
-  logger.info(`Attempting to refresh Trakt token for user: ${username}`);
-  try {
-    const response = await fetch("https://api.trakt.tv/oauth/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "stremio-ai-picks",
-        "trakt-api-version": "2",
-        "trakt-api-key": TRAKT_CLIENT_ID,
-      },
-      body: JSON.stringify({
-        refresh_token: refreshToken,
-        client_id: process.env.TRAKT_CLIENT_ID,
-        client_secret: process.env.TRAKT_CLIENT_SECRET,
-                redirect_uri: `${HOST}/oauth/callback`,
-        grant_type: "refresh_token",
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Failed to refresh token: ${response.status} - ${errorBody}`);
-    }
-
-    const tokenData = await response.json();
-    storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
-    logger.info(`Successfully refreshed and stored new Trakt token for user: ${username}`);
-
-    return {
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token,
-      expires_in: tokenData.expires_in,
-    };
-  } catch (error) {
-    logger.error(`Error refreshing Trakt token for ${username}:`, { error: error.message });
-    return null;
+  const existingRefreshPromise = traktRefreshLocks.get(username);
+  if (existingRefreshPromise) {
+    logger.info(`Waiting for in-flight Trakt token refresh for user: ${username}`);
+    return existingRefreshPromise;
   }
+
+  const refreshPromise = (async () => {
+    logger.info(`Attempting to refresh Trakt token for user: ${username}`);
+    try {
+      const response = await fetch("https://api.trakt.tv/oauth/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "stremio-ai-picks",
+          "trakt-api-version": "2",
+          "trakt-api-key": TRAKT_CLIENT_ID,
+        },
+        body: JSON.stringify({
+          refresh_token: refreshToken,
+          client_id: process.env.TRAKT_CLIENT_ID,
+          client_secret: process.env.TRAKT_CLIENT_SECRET,
+          redirect_uri: `${HOST}/oauth/callback`,
+          grant_type: "refresh_token",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Failed to refresh token: ${response.status} - ${errorBody}`);
+      }
+
+      const tokenData = await response.json();
+      storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
+      logger.info(`Successfully refreshed and stored new Trakt token for user: ${username}`);
+
+      return {
+        access_token: tokenData.access_token,
+        refresh_token: tokenData.refresh_token,
+        expires_in: tokenData.expires_in,
+      };
+    } catch (error) {
+      logger.error(`Error refreshing Trakt token for ${username}:`, { error: error.message });
+      return null;
+    } finally {
+      traktRefreshLocks.delete(username);
+    }
+  })();
+
+  traktRefreshLocks.set(username, refreshPromise);
+  return refreshPromise;
 }
 
 const ENABLE_LOGGING = process.env.ENABLE_LOGGING === "true" || false;
