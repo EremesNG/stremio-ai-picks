@@ -17,7 +17,13 @@ try {
 
 const fs = require("fs");
 const path = require("path");
-const { addonInterface, catalogHandler, determineIntentFromKeywords } = require("./addon");
+const {
+  addonInterface,
+  catalogHandler,
+  determineIntentFromKeywords,
+  purgeEmptyAiCacheEntries,
+  hydrateQueryCounter,
+} = require("./addon");
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const logger = require("./utils/logger");
@@ -123,13 +129,13 @@ const setupManifest = {
   configurationURL: `${HOST}${BASE_PATH}/configure`,
 };
 
-async function startServer() {
+function startServer() {
   try {
-    initDb();
-    const { purgeEmptyAiCacheEntries } = require("./addon");
+    initDb().catch((err) => logger.error("Failed to initialize database", { error: err.message }));
     logger.info("Running a one-time purge of empty AI cache entries...");
     const purgeStats = purgeEmptyAiCacheEntries();
     logger.info("Empty AI cache purge complete.", { purged: purgeStats.purged, remaining: purgeStats.remaining });
+    hydrateQueryCounter().catch((err) => logger.error("Failed to hydrate query counter", { error: err.message }));
 
     if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
       logger.error(
