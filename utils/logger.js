@@ -29,14 +29,8 @@ function writeLog(level, message, data) {
   const formattedData = data ? `\n${JSON.stringify(data, null, 2)}` : "";
   const logMessage = `[${timestamp}] ${level}: ${message}${formattedData}\n`;
 
-  // Write to file (skip on Vercel where filesystem is read-only)
-  if (!isVercel) {
-    fs.appendFile(
-      path.join(logsDir, "app.log"),
-      logMessage,
-      () => {} // Silent error handling
-    );
-  }
+  // Write to file
+  writeToLogFile("app.log", logMessage);
 }
 
 /**
@@ -78,34 +72,23 @@ function logQuery(query) {
   // Create log line with Melbourne time
   const logLine = `${getMelbourneTime()}|${query}\n`;
 
-  // Write to query log file with error handling (skip on Vercel where filesystem is read-only)
-  if (!isVercel) {
-    fs.appendFile(path.join(logsDir, "query.log"), logLine, (err) => {
-      if (err) {
-        console.error("Error writing to query.log:", err);
-      }
-    });
-  }
+  // Write to query log file with error handling
+  writeToLogFile("query.log", logLine, (err) => {
+    if (err) {
+      console.error("Error writing to query.log:", err);
+    }
+  });
 }
 
 /**
- * Helper function to log empty catalog queries to error.log
- * @param {string} query - The search query that returned no results
- * @param {object} data - Additional data about the query (type, filters, etc.)
+ * Helper function to write to a log file (DRY pattern for isVercel + fs.appendFile)
+ * @param {string} filename - Name of the log file in logsDir
+ * @param {string} message - Message to append
+ * @param {function} errorHandler - Optional error handler callback
  */
-function logEmptyCatalog(query, data = {}) {
-  const timestamp = new Date().toISOString();
-  const formattedData = JSON.stringify(data, null, 2);
-  const logMessage = `[${timestamp}] EMPTY_CATALOG: Query "${query}" returned no results\n${formattedData}\n`;
-
-  // Write to error log file (skip on Vercel where filesystem is read-only)
-  if (!isVercel) {
-    fs.appendFile(
-      path.join(logsDir, "error.log"),
-      logMessage,
-      () => {} // Silent error handling
-    );
-  }
+function writeToLogFile(filename, message, errorHandler) {
+  if (isVercel) return;
+  fs.appendFile(path.join(logsDir, filename), message, errorHandler || (() => {}));
 }
 
 // Simplified logger without console logs, only file logging
@@ -163,14 +146,8 @@ const logger = {
     const formattedData = JSON.stringify(data, null, 2);
     const logMessage = `[${timestamp}] EMPTY_CATALOG: ${reason}\n${formattedData}\n`;
 
-    // Write to error log file (skip on Vercel where filesystem is read-only)
-    if (!isVercel) {
-      fs.appendFile(
-        path.join(logsDir, "error.log"),
-        logMessage,
-        () => {} // Silent error handling
-      );
-    }
+    // Write to error log file
+    writeToLogFile("error.log", logMessage);
   },
   agent: function (label, data) {
     if (ENABLE_LOGGING) {
@@ -183,14 +160,8 @@ const logger = {
       }
       const logMessage = `[${timestamp}] [AGENT] [${label}]: ${formattedData}\n---\n`;
 
-      // Write to agent log file (skip on Vercel where filesystem is read-only)
-      if (!isVercel) {
-        fs.appendFile(
-          path.join(logsDir, "agent.log"),
-          logMessage,
-          () => {} // Silent error handling
-        );
-      }
+      // Write to agent log file
+      writeToLogFile("agent.log", logMessage);
     }
   },
   ENABLE_LOGGING,
