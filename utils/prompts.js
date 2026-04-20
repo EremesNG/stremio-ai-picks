@@ -17,36 +17,114 @@ function formatInitialResult(item = {}) {
   return `${item.title || item.name} (${year})`;
 }
 
-function buildLinearPrompt(ctx = {}) {
-  const query = getQuery(ctx);
-  const type = getType(ctx);
-  const numResults = getNumResults(ctx);
+function buildSharedGuidance(currentYear) {
+  return [
+    "- Focus on the specific requirements from the query (genres, time period, mood).",
+    "- Use the user's preferences to refine choices within those requirements.",
+    "- Consider rating patterns to gauge quality preferences.",
+    "- Prioritize content with preferred actors/directors when relevant.",
+    "- Include variety while staying within the requested criteria.",
+    "- For genre-specific queries, prioritize acclaimed or popular content in that genre.",
+    "- Include a mix of well-known classics and hidden gems in the requested genre.",
+    "- For genre-specific queries, prioritize acclaimed or popular content in that genre that the user hasn't seen.",
+    "- If the user has watched many content in the requested genre, look for similar but less obvious choices.",
+    `- Current year is ${currentYear}. For time-based queries: past year = ${currentYear - 1} to ${currentYear}; recent = ${currentYear - 2} to ${currentYear}; new/latest = ${currentYear}.`,
+    "- For franchise/series queries, list the full franchise first in strict chronological order, then add official spin-offs or highly similar titles only if needed.",
+    "- For actor/director/studio filmography queries, return notable works chronologically across the career.",
+    "- For general recommendations, order by relevance to the query.",
+  ];
+}
+
+function buildLinearOutputContract(numResults) {
+  return [
+    `Return exactly ${numResults} items as a valid JSON object with a recommendations array of { type, name, year } objects.`,
+    "Do not include markdown, prose, code fences, or commentary.",
+  ];
+}
+
+function buildAgentOutputContract(numResults, { includeWatchedRule = false } = {}) {
+  const lines = [
+    `Return exactly ${numResults} items as a valid JSON array of { type, name, year, tmdb_id, imdb_id? } objects.`,
+  ];
+
+  if (includeWatchedRule) {
+    lines.push("Always exclude any item the user has already watched or rated.");
+  }
+
+  lines.push("Do not include markdown, prose, code fences, or commentary.");
+  return lines;
+}
+
+function buildLinearFewShot(type) {
+  if (type === "movie") {
+    return '{"recommendations":[{"type":"movie","name":"The Matrix","year":1999}]}';
+  }
+
+  return '{"recommendations":[{"type":"series","name":"Breaking Bad","year":2008}]}';
+}
+
+function buildAgentFewShot(type) {
+  if (type === "movie") {
+    return '[{"type":"movie","name":"The Matrix","year":1999,"tmdb_id":603,"imdb_id":"tt0133093"}]';
+  }
+
+  return '[{"type":"series","name":"Breaking Bad","year":2008,"tmdb_id":1396,"imdb_id":"tt0903747"}]';
+}
+
+function buildQueryAnalysis(ctx = {}) {
   const discoveredGenres = Array.isArray(ctx.discoveredGenres) ? ctx.discoveredGenres : [];
   const genreCriteria = ctx.genreCriteria || null;
-  const traktData = ctx.traktData || null;
   const tmdbInitialResults = Array.isArray(ctx.tmdbInitialResults) ? ctx.tmdbInitialResults : [];
 
-  const promptText = [
-    `You are a ${type} recommendation expert. Analyze this query: "${query}"`,
-    "",
-    "QUERY ANALYSIS:",
-    ctx.isRecommendation && discoveredGenres.length > 0
+  return [
+    discoveredGenres.length > 0
       ? `Discovered genres: ${discoveredGenres.join(", ")}`
       : genreCriteria?.include?.length > 0
         ? `Requested genres: ${genreCriteria.include.join(", ")}`
         : "",
     genreCriteria?.mood?.length > 0 ? `Mood/Style: ${genreCriteria.mood.join(", ")}` : "",
-    traktData ? "Use Trakt history and preferences to avoid repeats." : "",
     tmdbInitialResults.length > 0
       ? `Initial database search results: ${tmdbInitialResults.slice(0, 15).map(formatInitialResult).join(" | ")}`
       : "",
-    `Return up to ${numResults} ${type} recommendations as JSON only.`,
-    type === "movie"
-      ? '{"recommendations":[{"type":"movie","name":"The Matrix","year":1999},{"type":"movie","name":"Inception","year":2010}]}'
-      : '{"recommendations":[{"type":"series","name":"Breaking Bad","year":2008},{"type":"series","name":"Game of Thrones","year":2011}]}'
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean);
+}
 
-  return promptText;
+function buildLinearPrompt(ctx = {}) {
+  const query = getQuery(ctx);
+  const type = getType(ctx);
+  const numResults = getNumResults(ctx);
+  const currentYear = ctx.currentYear || DEFAULT_CURRENT_YEAR;
+  const discoveredGenres = Array.isArray(ctx.discoveredGenres) ? ctx.discoveredGenres : [];
+  const genreCriteria = ctx.genreCriteria || null;
+  const tmdbInitialResults = Array.isArray(ctx.tmdbInitialResults) ? ctx.tmdbInitialResults : [];
+  const queryAnalysis = buildQueryAnalysis({
+    discoveredGenres: ctx.isRecommendation ? discoveredGenres : [],
+    genreCriteria,
+    tmdbInitialResults,
+  });
+
+  return [
+    `Role: You are a ${type} recommendation expert.`,
+    "",
+    "USER REQUEST:",
+    `Query: ${query}`,
+    `Requested type: ${type}`,
+    `Requested count: ${numResults}`,
+    discoveredGenres.length > 0 ? `Genres: ${discoveredGenres.join(", ")}` : "",
+    genreCriteria?.mood?.length > 0 ? `Mood: ${genreCriteria.mood.join(", ")}` : "",
+    "",
+    "QUERY ANALYSIS:",
+    ...queryAnalysis,
+    "",
+    "GUIDANCE:",
+    ...buildSharedGuidance(currentYear),
+    "",
+    "OUTPUT CONTRACT:",
+    ...buildLinearOutputContract(numResults),
+    "",
+    "FEW-SHOT EXAMPLE:",
+    buildLinearFewShot(type),
+  ].filter(Boolean).join("\n");
 }
 
 function buildAgentSystemPrompt(ctx = {}) {
@@ -78,9 +156,8 @@ function buildAgentSystemPrompt(ctx = {}) {
   }
 
   toolProtocol.push("OUTPUT RULES:");
-  toolProtocol.push("- Final answer MUST be a valid JSON array of objects shaped like { type, name, year, tmdb_id, imdb_id? }.");
-  toolProtocol.push(`- Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`);
-  toolProtocol.push("- Do not include markdown, prose, code fences, or commentary.");
+  toolProtocol.push(...buildAgentOutputContract(numResults));
+  toolProtocol.splice(toolProtocol.length - 1, 0, `- Return exactly ${numResults} items unless the available evidence cannot support that many safe recommendations.`);
 
   return [
     `You are a ${type} recommendation agent.`,
@@ -100,25 +177,6 @@ function buildAgentInitialMessage(ctx = {}) {
   const genreCriteria = ctx.genreCriteria || null;
   const filterWatched = ctx.filterWatched !== false; // default true if missing
 
-  const guidance = [
-    "- Focus on the specific requirements from the query (genres, time period, mood).",
-    "- Use the user's preferences to refine choices within those requirements.",
-    "- Consider rating patterns to gauge quality preferences.",
-    "- Prioritize content with preferred actors/directors when relevant.",
-    "- Include variety while staying within the requested criteria.",
-    "- For genre-specific queries, prioritize acclaimed or popular content in that genre that the user hasn't seen.",
-    "- Include a mix of well-known classics and hidden gems in the requested genre.",
-    "- If the user has watched many content in the requested genre, look for similar but less obvious choices.",
-    `- Current year is ${currentYear}. For time-based queries: past year = ${currentYear - 1} to ${currentYear}; recent = ${currentYear - 2} to ${currentYear}; new/latest = ${currentYear}.`,
-    "- For franchise/series queries, list the full franchise first in strict chronological order, then add official spin-offs or highly similar titles only if needed.",
-    "- For actor/director/studio filmography queries, return notable works chronologically across the career.",
-    "- For general recommendations, order by relevance to the query.",
-  ];
-
-  const examples = type === "movie"
-    ? '[{"type":"movie","name":"The Matrix","year":1999,"tmdb_id":603,"imdb_id":"tt0133093"}]'
-    : '[{"type":"series","name":"Breaking Bad","year":2008,"tmdb_id":1396,"imdb_id":"tt0903747"}]';
-
   const queryBits = [
     `User query: ${query}`,
     `Requested type: ${type}`,
@@ -129,25 +187,53 @@ function buildAgentInitialMessage(ctx = {}) {
   ].filter(Boolean);
 
   const outputContract = [
-    `Return exactly ${numResults} items as a valid JSON array of { type, name, year, tmdb_id, imdb_id? } objects.`,
+    ...buildAgentOutputContract(numResults, { includeWatchedRule: filterWatched }),
   ];
-
-  if (filterWatched) {
-    outputContract.push("Always exclude any item the user has already watched or rated.");
-  }
 
   return [
     "USER REQUEST:",
     ...queryBits,
     "",
     "GUIDANCE:",
-    ...guidance,
+    ...buildSharedGuidance(currentYear),
     "",
     "OUTPUT CONTRACT:",
     ...outputContract,
     "",
     "FEW-SHOT EXAMPLE:",
-    examples,
+    buildAgentFewShot(type),
+  ].join("\n");
+}
+
+function buildSimilarContentPrompt(ctx = {}) {
+  const sourceTitle = ctx.sourceTitle || "Unknown title";
+  const sourceYear = ctx.sourceYear || "N/A";
+  const type = getType(ctx);
+  const numResults = getNumResults(ctx);
+
+  return [
+    "You are an expert recommendation engine for movies and TV shows.",
+    `Your task is to generate a list of exactly ${numResults} recommendations that are highly similar to "${sourceTitle} (${sourceYear})".`,
+    "",
+    "Your final list must be constructed in two parts:",
+    "",
+    "**PART 1: FRANCHISE ENTRIES**",
+    `First, list all other official movies/series from the same franchise as "${sourceTitle}". This is your highest priority.`,
+    "*   This part of the list **MUST** be sorted chronologically by release year.",
+    "",
+    "**PART 2: SIMILAR RECOMMENDATIONS**",
+    `After the franchise entries (if any), fill the remaining slots to reach ${numResults} total recommendations with unrelated titles that are highly similar in mood, theme, and genre.`,
+    `*   This part of the list **MUST** be sorted by relevance to "${sourceTitle}", with the most similar item first.`,
+    "",
+    "**CRITICAL RULES:**",
+    `1.  **Exclusion:** You **MUST NOT** include the original item, "${sourceTitle} (${sourceYear})", in your list.`,
+    "2.  **Final Output:** Provide **ONLY** the combined list of recommendations. Do not include any headers (like \"PART 1\"), introductory text, or explanations.",
+    "",
+    "OUTPUT CONTRACT:",
+    ...buildLinearOutputContract(numResults),
+    "",
+    "FEW-SHOT EXAMPLE:",
+    `{"recommendations":[{"type":"${type}","name":"The Dark Knight","year":2008}]}`,
   ].join("\n");
 }
 
@@ -173,9 +259,33 @@ function buildProgressFeedback({ acceptedItems = [], neededCount = 0, alreadyPro
   ].join("\n");
 }
 
+function buildClassificationPrompt(query) {
+  return `
+Analyze this recommendation query: "${query}"
+
+Determine:
+1. What type of content is being requested (movie, series, or ambiguous)
+2. What genres are relevant to this query (be specific and use standard genre names)
+
+Respond with a single JSON object matching this shape:
+{
+  "type": "movie|series|ambiguous",
+  "genres": ["genre1", "genre2", "genre3"]
+}
+
+Where:
+- type is one of: movie, series, ambiguous
+- genres is an array of standard genre names, or ["all"] if no specific genres are discovered in the query
+
+Do not include any explanatory text before or after your response. Return only JSON.
+`;
+}
+
 module.exports = {
   buildLinearPrompt,
   buildAgentSystemPrompt,
   buildAgentInitialMessage,
+  buildSimilarContentPrompt,
   buildProgressFeedback,
+  buildClassificationPrompt,
 };

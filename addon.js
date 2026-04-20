@@ -7,7 +7,7 @@ const { withRetry } = require("./utils/apiRetry");
 const { runAgentLoop } = require("./utils/agent");
 const { toolDeclarations, executeTools: executeAgentTools } = require("./utils/agent-tools");
 const { fetchTraktFavorites, normalizeMediaKey } = require("./utils/trakt");
-const { buildLinearPrompt } = require("./utils/prompts");
+const { buildLinearPrompt, buildSimilarContentPrompt, buildClassificationPrompt } = require("./utils/prompts");
 const { getStatValue, incrementStat, setStatValue } = require("./database");
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
 const TMDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB
@@ -2664,25 +2664,7 @@ async function discoverTypeAndGenres(query, geminiKey, geminiModel) {
   const ai = new GoogleGenAI({ apiKey: geminiKey });
   let classifyTokenUsage = null;
 
-  const promptText = `
-Analyze this recommendation query: "${query}"
-
-Determine:
-1. What type of content is being requested (movie, series, or ambiguous)
-2. What genres are relevant to this query (be specific and use standard genre names)
-
-Respond with a single JSON object matching this shape:
-{
-  "type": "movie|series|ambiguous",
-  "genres": ["genre1", "genre2", "genre3"]
-}
-
-Where:
-- type is one of: movie, series, ambiguous
-- genres is an array of standard genre names, or ["all"] if no specific genres are discovered in the query
-
-Do not include any explanatory text before or after your response. Return only JSON.
-`;
+  const promptText = buildClassificationPrompt(query);
 
   logger.agent("CLASSIFY_PROMPT", {
     query,
@@ -3861,217 +3843,7 @@ const catalogHandler = async function (args, req) {
         });
       }
     }
-
-    /* try {
-              "Balance user preferences with query requirements",
-            "1. Focus on the specific requirements from the query (genres, time period, mood)",
-            "2. Use user's preferences to refine choices within those requirements",
-            "3. Consider their rating patterns to gauge quality preferences",
-            "4. Prioritize content with preferred actors/directors when relevant",
-            "5. Include some variety while staying within the requested criteria",
-            "6. For genre-specific queries, prioritize acclaimed or popular content in that genre that the user hasn't seen",
-            "7. Include a mix of well-known classics and hidden gems in the requested genre",
-            "8. If the user has watched many content in the requested genre, look for similar but less obvious choices",
-            ""
-          );
-        }
-      }
-
-      if (tmdbInitialResults.length > 0) {
-        const initialTitles = tmdbInitialResults
-          .slice(0, 15)
-          .map(item => `- ${item.title || item.name} (${(item.release_date || item.first_air_date || 'N/A').substring(0, 4)})`)
-          .join('\n');
-
-        promptText.push(
-          "CONTEXT FROM INITIAL DATABASE SEARCH:",
-          "The following is a list of relevant titles found in an initial database search. Your main task is use this as the primary data source, add any official entries that might be missing, add similar titles, sort them by relevance and return the comprehensive list.",
-          "",
-          "Found Titles:",
-          initialTitles,
-          "",
-          "If you are unable to collate ", numResults, " ", type, " recommendations", " add the missing ones from the initial database search results to the end of your recommendations.",
-        );
-      }
-
-      let examplesText;
-      if (type === 'movie') {
-        examplesText = [
-          "EXAMPLES:",
-          '{"recommendations":[{"type":"movie","name":"The Matrix","year":1999},{"type":"movie","name":"Inception","year":2010}]}',
-        ].join('\n');
-      } else {
-        examplesText = [
-          "EXAMPLES:",
-          '{"recommendations":[{"type":"series","name":"Breaking Bad","year":2008},{"type":"series","name":"Game of Thrones","year":2011}]}',
-        ].join('\n');
-      }
-
-      promptText = promptText.concat([
-        "IMPORTANT INSTRUCTIONS:",
-        `- Base your recommendations on the most current, publicly available information, especially for queries about new, recent, or future releases.`,
-        `- Current year is ${currentYear}. For time-based queries:`,
-        `  * 'past year' means content from ${
-          currentYear - 1
-        } to ${currentYear}`,
-        `  * 'recent' means within the last 2-3 years (${
-          currentYear - 2
-        } to ${currentYear})`,
-        `  * 'new' or 'latest' means released in ${currentYear}`,
-        "SPECIFIC QUERY HANDLING:",
-        "First, determine if the query matches one of the types below. If it does, follow its rules precisely.",
-        "",
-        `1. FRANCHISE/SERIES: If the query is for a specific title that is part of a larger series (e.g., 'Shrek', 'The Matrix Reloaded', 'Harry Potter', 'star wars', 'Jurassic Park') or explicitly asks for a franchise ('James Bond movies'), ${franchiseInstruction}`,
-        `   - List them first, in STRICT chronological order of release.`,
-        `   - After listing the entire franchise, if you need more results to reach the count of ${numResults}, you may add official spin-offs or highly similar titles.`,
-        "",
-        `2. ACTOR/DIRECTOR/STUDIO FILMOGRAPHY: If the query is for the works of a person or entity (e.g., 'Tom Cruise movies', 'Christopher Nolan films', 'Pixar movies', 'Marvel movies', 'dc universe', 'Fast and Furious franchise'), list their most notable and critically acclaimed works.`,
-        `   - Provide a comprehensive selection covering different genres and eras of their career.`,
-        `   - Order these results chronologically by release year.`,
-        "",
-        `3. GENERAL RECOMMENDATIONS: For ALL other queries, provide diverse recommendations that best match the query's theme, genre, and mood.`,
-        `   - Order these results by their relevance to the query.`,
-        "CRITICAL REQUIREMENTS:",
-        `- You MUST use the Google Search tool to find ALL recommendations. Your internal knowledge is outdated and should only be used in conjunction with Google search tool for this task.`,
-      ]);
-
-      if (traktData) {
-        promptText.push(
-          `- DO NOT recommend any content that appears in the user's watch history or ratings above.`,
-          `- Recommend content that is SIMILAR to the user's highly rated content but NOT THE SAME ones.`
-        );
-      }
-
-      promptText = promptText.concat([
-        `- You MUST return upto ${numResults} ${type} recommendations. If you can't find enough perfect matches, broaden your criteria while staying within the genre/theme requirements.`,
-        `- Prioritize quality over exact matching - it's better to recommend a great content that's somewhat related than a mediocre content that perfectly matches all criteria.`,
-        `- If the user has watched many content in the requested genre, consider recommending lesser-known gems, international films, or recent releases they might have missed.`,
-        "",
-        "RESPONSE FORMAT: Return a single JSON object with a recommendations array of { type, name, year } objects.",
-        "Do not include any commentary or markdown.",
-        "",
-        examplesText,
-        "",
-        "RULES:",
-        `- Type: Accurately label each item as 'movie' or 'series'.`,
-        "- Year: YYYY format",
-        "- Titles: Provide clean, official titles only. Do NOT add extra text like '(film)', '(documentary)', or other descriptions.",
-        "- Content: ONLY include official, released movies and TV series. Exclude games, books, fan-made content, and stage productions.",
-        "- Only best matches that strictly match ALL query requirements",
-        "- If specific genres/time periods are requested, ALL recommendations must match those criteria",
-      ]);
-
-      if (genreCriteria) {
-        if (genreCriteria.include.length > 0) {
-          promptText.push(
-            `- Must match genres: ${genreCriteria.include.join(", ")}`
-          );
-        }
-        if (genreCriteria.exclude.length > 0) {
-          promptText.push(
-            `- Exclude genres: ${genreCriteria.exclude.join(", ")}`
-          );
-        }
-        if (genreCriteria.mood.length > 0) {
-          promptText.push(
-            `- Match mood/style: ${genreCriteria.mood.join(", ")}`
-          );
-        }
-      }
-
-      promptText = promptText.join("\n");
-
-      logger.info("Making Gemini API call", {
-        model: geminiModel,
-        query: searchQuery,
-        type,
-        prompt: promptText,
-        genreCriteria,
-        numResults,
-      });
-
-      // Use withRetry for the Gemini API call
-      let rawText;
-      try {
-        rawText = await withRetry(
-          async () => {
-            try {
-              const config = {
-                responseMimeType: "application/json",
-                responseJsonSchema: {
-                  type: "object",
-                  properties: {
-                    recommendations: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          type: { type: "string", enum: ["movie", "series"] },
-                          name: { type: "string" },
-                          year: { type: "integer" },
-                        },
-                        required: ["type", "name", "year"],
-                        propertyOrdering: ["type", "name", "year"],
-                      },
-                    },
-                  },
-                  required: ["recommendations"],
-                  propertyOrdering: ["recommendations"],
-                },
-              };
-
-              if (/2\.5|[3-9]\./i.test(geminiModel)) {
-                config.thinkingConfig = { thinkingBudget: 1024 };
-              }
-
-              const aiResult = await ai.models.generateContent({
-                model: geminiModel,
-                config,
-                contents: promptText,
-              });
-              const responseText = aiResult.text.trim();
-
-              logger.info("Gemini API response", {
-                duration: `${Date.now() - startTime}ms`,
-                promptTokens: aiResult.promptFeedback?.tokenCount,
-                candidates: aiResult.candidates?.length,
-                safetyRatings: aiResult.candidates?.[0]?.safetyRatings,
-                responseTextLength: responseText.length,
-                responseTextSample:
-                  responseText.substring(0, 100) +
-                  (responseText.length > 100 ? "..." : ""),
-              });
-
-              return aiResult.text;
-            } catch (error) {
-              logger.error("Gemini API call failed", {
-                error: error.message,
-                status: error.httpStatus || 500,
-                stack: error.stack,
-              });
-              error.status = error.httpStatus || 500;
-              throw error;
-            }
-          },
-          {
-            maxRetries: 3,
-            initialDelay: 2000,
-            maxDelay: 10000,
-            // Don't retry 400 errors (bad requests)
-            shouldRetry: (error) => !error.status || error.status !== 400,
-            operationName: "Gemini API call",
-          }
-        );
-      } catch (error) {
-        logger.warn("Gemini linear recommendation call failed, returning empty catalog", {
-          error: error.message,
-          searchQuery,
-        });
-        rawText = JSON.stringify({ recommendations: [] });
-      }
-
-      */
-
+    
       let rawText;
       if (useAgentRecommendations) {
         rawText = JSON.stringify({ recommendations: agentRecommendations });
@@ -4642,37 +4414,12 @@ const metaHandler = async function (args) {
       let numResults = parseInt(NumResults) || 15;
       if (numResults > 25) numResults = 25;
 
-      const promptText = `
-      You are an expert recommendation engine for movies and TV shows.
-      Your task is to generate a list of exactly ${numResults} recommendations that are highly similar to "${sourceTitle} (${sourceYear})".
-
-      Your final list must be constructed in two parts:
-
-      **PART 1: FRANCHISE ENTRIES**
-      First, list all other official movies/series from the same franchise as "${sourceTitle}". This is your highest priority.
-      *   This part of the list **MUST be sorted chronologically by release year**.
-
-      **PART 2: SIMILAR RECOMMENDATIONS**
-      After the franchise entries (if any), fill the remaining slots to reach ${numResults} total recommendations with unrelated titles that are highly similar in mood, theme, and genre.
-      *   This part of the list **MUST be sorted by relevance to "${sourceTitle}", with the most similar item first**.
-
-      **CRITICAL RULES:**
-      1.  **Exclusion:** You **MUST NOT** include the original item, "${sourceTitle} (${sourceYear})", in your list.
-      2.  **Final Output:** Provide **ONLY** the combined list of recommendations. Do not include any headers (like "PART 1"), introductory text, or explanations.
-
-      **Format:**
-      Return a single JSON object with a recommendations array of { type, name, year } objects.
-      Do not include any commentary or markdown.
-
-      **Example (if the source was 'The Dark Knight' and numResults was 5):**
-      {"recommendations":[
-        {"type":"movie","name":"Batman Begins","year":2005},
-        {"type":"movie","name":"The Dark Knight Rises","year":2012},
-        {"type":"movie","name":"The Town","year":2010},
-        {"type":"movie","name":"Zodiac","year":2007},
-        {"type":"movie","name":"Prisoners","year":2013}
-      ]}
-      `;
+      const promptText = buildSimilarContentPrompt({
+        sourceTitle,
+        sourceYear,
+        numResults,
+        type,
+      });
 
       logger.agent("SIMILAR_PROMPT", {
         sourceTitle,
