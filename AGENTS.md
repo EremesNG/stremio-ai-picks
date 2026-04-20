@@ -13,7 +13,7 @@ For deep work on a specific folder, also read that folder's `codemap.md`.
 
 - **Stack**: Node.js (CommonJS), Express, `stremio-addon-sdk`, Google Gemini AI, TMDB, Trakt.tv, `better-sqlite3`
 - **Entry point**: `server.js` → `addon.js`
-- **Port**: hardcoded `7000`, listens on `0.0.0.0`
+- **Port**: `3000` (dev), deployed on Vercel (primary), Docker alternative
 - **No test suite, no linter, no formatter configured**
 - **No CI/CD pipelines**
 
@@ -76,9 +76,9 @@ The Gemini recommendation agent uses a turn-based function-calling loop. Key fac
 
 ## Deployment
 
-- **Docker**: `Dockerfile` uses `node:23` with corepack + pnpm, exposes port `7000`, sets `NODE_ENV=production`.
-- **PM2**: `ecosystem.config.js` — fork mode, single instance, 2GB memory limit, logs to `logs/`.
-- **Gitignored artifacts**: `node_modules/`, `.env`, `logs/`, `trakt_tokens.db`, `cache_data/`.
+- **Vercel** (primary): Serverless deployment with Turso (LibSQL) for token storage. Environment variables configured in Vercel dashboard.
+- **Docker** (alternative): `Dockerfile` uses `node:23` with corepack + pnpm, exposes port `3000`, sets `NODE_ENV=production`.
+- **Gitignored artifacts**: `node_modules/`, `.env`, `trakt_tokens.db`, `cache_data/`.
 
 ## Conventions
 

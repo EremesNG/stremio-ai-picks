@@ -8,7 +8,7 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 - **`addon.js`** — Core Stremio addon logic: catalog/meta/stream handlers, AI agent loop integration, TMDB/Trakt API processing, LRU caching, config field parsing (FilterWatched, MaxTurns, HomepageQuery).
 - **`database.js`** — SQLite persistence for Trakt.tv OAuth tokens. Singleton DB connection with prepared statements.
 - **`package.json`** — Dependency manifest. Key deps: `stremio-addon-sdk`, `@google/generative-ai`, `express`, `better-sqlite3`, `better-lru-cache`. Managed via pnpm.
-- **`Dockerfile`** — Container build on `node:23` with corepack + pnpm. Exposes port 7000, sets NODE_ENV=production.
+- **`Dockerfile`** — Container build on `node:23` with corepack + pnpm. Exposes port 3000, sets NODE_ENV=production.
 
 ## Architecture Overview
 
@@ -61,9 +61,8 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 | **server.js** | Express HTTP server, request routing, Trakt OAuth flow, static file serving, admin cache management, graceful shutdown | Middleware chain (logging, platform detection, rate limiting); routes: `/*` (addon), `/oauth/callback`, `/api/getConfig/:configId`, `/api/decrypt-config`, `/cache/save`, `/stats/*`, `/oauth/refresh` |
 | **addon.js** | Core Stremio addon logic, catalog/meta/stream handlers, AI agent integration, LRU caching, config parsing | `addonInterface`, `catalogHandler`, `metaHandler`, `streamHandler`, `SimpleLRUCache`, `purgeEmptyAiCacheEntries`; reads `DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"`, `FilterWatched`, `MaxTurns`, `HomepageQuery` |
 | **database.js** | SQLite token storage for Trakt OAuth tokens | `initDb`, `storeTokens`, `getTokens`; singleton DB connection, prepared statements, auto-created `trakt_tokens.db` |
-| **Dockerfile** | Container build specification | Node 23 base, corepack + pnpm, port 7000, NODE_ENV=production |
+| **Dockerfile** | Container build specification | Node 23 base, corepack + pnpm, port 3000, NODE_ENV=production |
 | **package.json** | Dependency manifest, npm scripts | Entry: `server.js`; key deps: `@google/generative-ai`, `better-sqlite3`, `stremio-addon-sdk`, `express`, `better-lru-cache` |
-| **ecosystem.config.js** | PM2 process manager configuration | Fork mode, single instance, 2GB memory limit, logs to `logs/` |
 
 ## Key Design Decisions
 

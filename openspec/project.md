@@ -30,7 +30,7 @@ AI-powered Stremio addon for movie/series recommendations using Google Gemini fo
 - `ENCRYPTION_KEY` is required and must be at least 32 characters.
 - `HOST`, `TRAKT_CLIENT_ID`, and `TRAKT_CLIENT_SECRET` are required env vars.
 - Gemini and TMDB keys are end-user configuration values and travel encrypted in the manifest URL, not as server env vars.
-- Default port is `7000`, listening on `0.0.0.0`.
+- Port is `3000` in development. Primary deployment is Vercel (serverless); Docker is an alternative for self-hosting.
 
 ## Windows Gotcha
 - `pnpm start:dev` uses `ENABLE_LOGGING=true node server.js`, which is Unix-style and fails in PowerShell/CMD; use `$env:ENABLE_LOGGING="true"; node server.js` instead.

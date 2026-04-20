@@ -22,7 +22,7 @@ AI-powered movie & TV show recommendations for Stremio.
 | GitHub | https://github.com/EremesNG/stremio-ai-picks |
 | Stack | Node.js, Express, `stremio-addon-sdk`, Google Gemini AI, TMDB, Trakt.tv |
 | Database | Turso (LibSQL) for Trakt OAuth tokens |
-| Deployment | Vercel (primary), Docker/PM2 (self-hosting alternative) |
+| Deployment | Vercel (primary), Docker (self-hosting alternative) |
 
 ## Features
 
@@ -498,7 +498,7 @@ This repository is deployed primarily on Vercel. The `vercel` branch is configur
 - Set the Trakt OAuth redirect URI to `https://{HOST}/oauth/callback` in your Trakt app settings.
 - In-memory caches are ephemeral on Vercel, so first requests after a cold start may be slower, but functionality still works.
 
-### 7.2 Self Hosting (Docker/PM2)
+### 7.2 Self Hosting (Docker)
 
 For self-hosted deployments, use the `main` branch, which includes local SQLite (`better-sqlite3`) plus file-based cache persistence.
 
@@ -519,8 +519,7 @@ For self-hosted deployments, use the `main` branch, which includes local SQLite 
 
 **Run options**
 
-- Docker: `Dockerfile` uses `node:23`, corepack + pnpm, exposes port `7000`, and runs `node server.js`.
-- PM2: `ecosystem.config.js` runs one forked instance on port `7000`.
+- Docker: `Dockerfile` uses `node:23`, corepack + pnpm, exposes port `3000`, and runs `node server.js`.
 
 **Notes**
 
