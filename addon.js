@@ -1338,7 +1338,7 @@ async function searchTMDBExactMatch(title, type, tmdbKey, language = "en-US", in
 
 const manifest = {
   id: "eremesng.aipicks",
-  version: "2.0.0",
+  version: "1.0.0",
   name: "AI Picks",
   description: "AI-powered movie and series recommendations",
   resources: [

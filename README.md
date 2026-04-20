@@ -7,7 +7,7 @@
 AI-powered movie & TV show recommendations for Stremio.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version 2.0.0" />
+  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 2.0.0" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license" />
   <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fstremio-ai-picks.vercel.app%2Fstats%2Fcount%3Fformat%3Djson&query=%24.count&label=Recommendations%20served&color=blue" alt="Recommendations served" />
 </p>
@@ -15,7 +15,7 @@ AI-powered movie & TV show recommendations for Stremio.
 | Field | Value |
 |---|---|
 | Addon ID | `eremesng.aipicks` |
-| Version | `2.0.0` |
+| Version | `1.0.0` |
 | Author | EremesNG (`eremesng@gmail.com`) |
 | Live URL | https://stremio-ai-picks.vercel.app/ |
 | Configure URL | https://stremio-ai-picks.vercel.app/configure |
