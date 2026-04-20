@@ -88,7 +88,12 @@ async function refreshTraktToken(username, refreshToken) {
       }
 
       const tokenData = await response.json();
-      storeTokens(username, tokenData.access_token, tokenData.refresh_token, tokenData.expires_in);
+      await storeTokens(
+        username,
+        tokenData.access_token,
+        tokenData.refresh_token,
+        tokenData.expires_in
+      );
       logger.info(`Successfully refreshed and stored new Trakt token for user: ${username}`);
 
       return {
@@ -395,9 +400,10 @@ function startServer() {
                // If user is configured with Trakt, get and refresh tokens if needed
                if (decryptedConfig.traktUsername) {
                  let tokenData = await getTokens(decryptedConfig.traktUsername);
-                if (tokenData) {
-                  // Check if token is expired (with a 5-minute buffer)
-                  if (tokenData.expires_at < Date.now() - 5 * 60 * 1000) {
+                 if (tokenData) {
+                  // expires_at is stored as Unix time in seconds
+                  // Refresh if the token is expired or will expire within the next 5 minutes.
+                  if (Number(tokenData.expires_at) < Math.floor(Date.now() / 1000) + 300) {
                     const newTokens = await refreshTraktToken(decryptedConfig.traktUsername, tokenData.refresh_token);
                     if (newTokens) {
                       decryptedConfig.TraktAccessToken = newTokens.access_token;
@@ -1140,7 +1146,7 @@ function startServer() {
 
         // If Trakt data is present, store it in the database
         if (traktAuthData && traktAuthData.username) {
-          storeTokens(
+          await storeTokens(
             traktAuthData.username,
             traktAuthData.accessToken,
             traktAuthData.refreshToken,
