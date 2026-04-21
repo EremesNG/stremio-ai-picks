@@ -64,107 +64,9 @@ function normalizeRecommendationType(value) {
   return null;
 }
 
-function normalizeRecommendationList(value) {
-  if (!Array.isArray(value)) {
-    logger.info("Agent recommendations were not an array", {
-      receivedType: typeof value,
-    });
-    return [];
-  }
-
-  const normalized = [];
-
-  value.forEach((item, index) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      logger.debug("Dropped invalid recommendation item", {
-        index,
-        reason: "not_an_object",
-      });
-      return;
-    }
-
-    const type = normalizeRecommendationType(item.type);
-    if (!type) {
-      logger.debug("Dropped invalid recommendation item", {
-        index,
-        reason: "invalid_type",
-        type: item.type,
-      });
-      return;
-    }
-
-    const rawName = typeof item.name === "string" ? item.name : item.title;
-    if (typeof rawName !== "string") {
-      logger.debug("Dropped invalid recommendation item", {
-        index,
-        reason: "missing_name",
-      });
-      return;
-    }
-
-    const name = rawName.trim();
-    if (!name) {
-      logger.debug("Dropped invalid recommendation item", {
-        index,
-        reason: "missing_name",
-      });
-      return;
-    }
-
-    const tmdbIdSource =
-      item.tmdb_id ?? item.tmdbId ?? item.ids?.tmdb ?? null;
-    const tmdb_id = parseStrictInteger(tmdbIdSource);
-    if (tmdb_id === null) {
-      logger.debug("Dropped invalid recommendation item", {
-        index,
-        reason: tmdbIdSource == null ? "missing_tmdb_id" : "invalid_tmdb_id",
-        tmdb_id: tmdbIdSource,
-      });
-      return;
-    }
-
-    const year = parseStrictInteger(item.year);
-    const imdbIdSource = item.imdb_id ?? item.imdbId ?? item.ids?.imdb;
-    const imdb_id =
-      typeof imdbIdSource === "string" && imdbIdSource.trim()
-        ? imdbIdSource.trim()
-        : null;
-
-    const normalizedItem = { type, name, year: year === null ? null : year, tmdb_id };
-
-    if (imdb_id) {
-      normalizedItem.imdb_id = imdb_id;
-    }
-
-    normalized.push(normalizedItem);
-  });
-
-  return normalized;
-}
-
 function normalizeNumResults(value) {
   const parsed = parseStrictInteger(value);
   return parsed && parsed > 0 ? parsed : DEFAULT_MAX_TURNS;
-}
-
-function normalizeIterable(value) {
-  if (!value) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  if (value instanceof Map || value instanceof Set) {
-    return [...value.values()];
-  }
-
-  if (typeof value[Symbol.iterator] === "function") {
-    return [...value];
-  }
-
-  return [value];
 }
 
 function getMediaIdentityKeys(item) {
@@ -186,26 +88,6 @@ function getMediaIdentityKeys(item) {
   }
 
   return keys.filter(Boolean);
-}
-
-function getPrimaryMediaIdentityKey(item) {
-  return getMediaIdentityKeys(item)[0] || "";
-}
-
-function isDuplicateAcrossTurns(item, proposedIdSet) {
-  if (!(proposedIdSet instanceof Set) || proposedIdSet.size === 0) {
-    return false;
-  }
-
-  return getMediaIdentityKeys(item).some((key) => proposedIdSet.has(key));
-}
-
-function addMediaIdentityKeys(targetSet, item) {
-  if (!(targetSet instanceof Set)) {
-    return;
-  }
-
-  getMediaIdentityKeys(item).forEach((key) => targetSet.add(key));
 }
 
 function normalizeProposedTitle(value) {
@@ -241,7 +123,6 @@ function collectProposedTitlesFromFunctionCalls(functionCalls) {
         titles,
         args.queries.map((query) => query?.query)
       );
-      return;
     }
   });
 
@@ -637,17 +518,6 @@ function isFunctionCallingUnsupportedError(error) {
   );
 }
 
-function buildFunctionResponseParts(functionCalls, errorMessage) {
-  return functionCalls.map((call) => ({
-    functionResponse: {
-      name: call.name,
-      response: {
-        error: errorMessage,
-      },
-    },
-  }));
-}
-
 function normalizeToolResultParts(toolResults) {
   if (!toolResults) {
     return [];
@@ -674,10 +544,6 @@ function countToolFailures(parts) {
       (response.error || response.success === false || response.ok === false)
     );
   }).length;
-}
-
-function isEmptyTurn(response, functionCalls, text) {
-  return hasCallableShape(response) && functionCalls.length === 0 && !text;
 }
 
 async function callGemini(chat, message, meta = {}) {
@@ -745,7 +611,6 @@ async function runAgentLoop(dependencies = {}) {
     traktWatchedIdSet,
     traktRatedIdSet,
     traktHistoryIdSet,
-    filterCandidates,
     toolDeclarations = [],
     executeTools,
     searchTMDB,
@@ -1627,10 +1492,6 @@ if (hasText) {
         return finalizeResult(collected.length > 0, collected, "tool_loop_exhausted");
       }
 
-      continue;
-    }
-
-    if (!turnResult.endedByText) {
       continue;
     }
   }
