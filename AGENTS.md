@@ -55,16 +55,22 @@ Env is loaded via `dotenv` (gracefully skipped if `.env` is absent).
 
 ## AI Agent Loop (`utils/agent.js`)
 
-The Gemini recommendation agent uses a turn-based function-calling loop. Key facts:
+The Gemini recommendation agent uses an orchestrator-turn loop. Key facts:
 
-- **Tools**: `search_tmdb`, `batch_search_tmdb` (up to 20 parallel queries), `check_if_watched`, `get_user_favorites`.
-- **Turn mechanics**: The initial Gemini call happens *before* the loop and does not count as a turn. Each loop iteration processes the previous response and makes one `callGemini` call.
-- **`maxTurns`**: Read from user config (range 4–12, default 6). Passed via `runAgentLoop` deps.
-- **Finalization guard**: On the last turn, the agent forces a JSON response even if Gemini is still calling tools.
-- **Partial results fallback**: If Gemini fails mid-loop with items already collected, the loop returns partials (`api_error_partial`) instead of throwing.
-- **`filterWatched`**: When `false`, `check_if_watched` is removed from tool declarations AND `traktWatchedIdSet`/`traktRatedIdSet` are omitted from runtime deps. The system prompt is updated accordingly.
-- **Batching pattern**: Prompt instructs Gemini to batch all TMDB searches first, then batch watched checks — never one-at-a-time. Gemini supports multiple parallel function calls per turn but must be explicitly instructed to do so.
-- **`proposedTitles` tracking**: Agent tracks titles across turns to avoid re-proposing already-discussed items.
+- **Orchestrator turn**: One full orchestrator↔agent cycle, from dispatch until the agent emits parseable text, closes with an empty non-tool response, or exhausts the inner tool cap.
+- **Internal tool rounds**: A single orchestrator turn may contain multiple Gemini tool rounds. Those rounds live inside the turn and do not consume `maxTurns`.
+- **Tools**: `batch_search_tmdb` (up to 20 parallel queries) and `get_user_favorites` only.
+- **`maxTurns`**: Read from user config (range 4–12, default 6). It budgets orchestrator attempts, not internal tool rounds.
+- **Internal safety cap**: `DEFAULT_MAX_TOOL_ROUNDS_PER_TURN = 8` in `utils/agent.js`. This guardrail is internal, not a public config, and prevents one turn from looping forever on tool calls.
+- **Final-turn exhaustion**: If the inner cap fires on the final orchestrator turn, the loop returns `tool_loop_exhausted`.
+- **Partial results fallback**: If Gemini fails mid-turn with items already collected, the loop returns partials (`api_error_partial`) instead of throwing.
+- **`filterWatched`**: When `false`, the Trakt watch/rate filtering deps are omitted from runtime deps and the prompt skips those checks.
+- **Batching pattern**: Prompt instructs Gemini to batch TMDB searches first, then use `get_user_favorites` when needed — never one-at-a-time. Gemini supports multiple parallel function calls within a turn, but they remain internal to that turn.
+- **`proposedTitles` tracking**: Agent tracks titles across orchestrator turns to avoid re-proposing already-discussed items.
+- **Agent item schema**: All recommendation items emitted by the agent must conform to the four-field schema `{ type, title, year, tmdb_id }`. The schema is declared once in `utils/agent-validate.js` as `AGENT_ITEM_SCHEMA` and derived into prompt wording via `formatSchemaForPrompt`.
+- **Validator module**: `utils/agent-validate.js` owns the contract. Exports: `AGENT_ITEM_SCHEMA`, `validateAgentItems(items, { gap, schema })`, `buildCorrectiveFeedback({ violations, gap, schema })`, and `formatSchemaForPrompt(schema)`. The validator checks required fields, field types, allowed fields, and per-turn item count against the current gap. It is also the source of truth that keeps prompt and validation in sync.
+- **Single corrective retry per turn**: Parse errors and schema violations both trigger exactly one corrective follow-up inside the same chat session. The retry uses `buildCorrectiveFeedback` to send a structured message listing violations and the required schema. A `contractRetryUsed` flag prevents a second retry. After the retry the orchestrator accepts whatever valid items remain and continues with normal outer-loop behavior.
+- **Turn-result logging**: `TURN_RESULT` logs include three new fields — `contractRetryUsed` (boolean), `violationsBeforeRetry` (array of compact violation descriptors from the first attempt), and `violationsAfterRetry` (array of compact violation descriptors from the corrective follow-up). `missingTmdb` and `missingTitle` are retained in `rejectedBreakdown` at `0` for backward compatibility.
 
 ## Configuration Page (`public/configure.html`)
 

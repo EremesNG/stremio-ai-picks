@@ -1,14 +1,21 @@
 const { GoogleGenAI } = require("@google/genai");
 const logger = require("./logger");
 const { withRetry } = require("./apiRetry");
+const { parseTurnResponse } = require("./agent-parse");
+const {
+  AGENT_ITEM_SCHEMA,
+  validateAgentItems,
+  buildCorrectiveFeedback,
+} = require("./agent-validate");
 const {
   buildAgentSystemPrompt,
-  buildAgentInitialMessage,
-  buildProgressFeedback,
+  buildTurnMessage,
 } = require("./prompts");
 const { normalizeMediaKey } = require("./trakt");
+const { buildMediaIdentityKeys, setHasIdentity } = require("./mediaIdentity");
 
 const DEFAULT_MAX_TURNS = 6;
+const DEFAULT_MAX_TOOL_ROUNDS_PER_TURN = 8;
 
 const FUNCTION_CALLING_UNSUPPORTED_PATTERNS = [
   /function calling/i,
@@ -199,51 +206,6 @@ function addMediaIdentityKeys(targetSet, item) {
   getMediaIdentityKeys(item).forEach((key) => targetSet.add(key));
 }
 
-function normalizeDroppedItems(value) {
-  return normalizeIterable(value).filter(Boolean);
-}
-
-function countDroppedItems(value) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  return normalizeDroppedItems(value).length;
-}
-
-function formatDroppedIdentity(item) {
-  if (typeof item === "string") {
-    return item;
-  }
-
-  if (typeof item === "number" && Number.isInteger(item)) {
-    return String(item);
-  }
-
-  const normalized = normalizeMediaKey(item);
-  if (normalized.type && normalized.tmdb_id != null) {
-    return `${normalized.type}:${normalized.tmdb_id}`;
-  }
-
-  if (normalized.imdb_id) {
-    return `imdb:${normalized.imdb_id}`;
-  }
-
-  if (normalized.title) {
-    return `${normalized.type || ""}:${normalized.title.toLowerCase()}:${normalized.year ?? ""}`;
-  }
-
-  return "unknown";
-}
-
-function getRecentProposedIds(proposedIdSet, limit = 50) {
-  if (!(proposedIdSet instanceof Set) || proposedIdSet.size === 0) {
-    return [];
-  }
-
-  return [...proposedIdSet].slice(-limit);
-}
-
 function normalizeProposedTitle(value) {
   if (typeof value !== "string") {
     return null;
@@ -251,25 +213,6 @@ function normalizeProposedTitle(value) {
 
   const trimmed = value.trim();
   return trimmed || null;
-}
-
-function formatAcceptedItemsForMessage(items) {
-  return items
-    .map((item) => {
-      const name = item?.name || item?.title || "Unknown";
-      const details = [];
-
-      if (item?.year) {
-        details.push(item.year);
-      }
-
-      if (item?.tmdb_id != null) {
-        details.push(`tmdb:${item.tmdb_id}`);
-      }
-
-      return details.length > 0 ? `${name} (${details.join(", ")})` : name;
-    })
-    .join(", ");
 }
 
 function addProposedTitles(target, titles) {
@@ -291,14 +234,6 @@ function collectProposedTitlesFromFunctionCalls(functionCalls) {
   functionCalls.forEach((call) => {
     const args = call?.args && typeof call.args === "object" ? call.args : {};
 
-    if (call?.name === "check_if_watched" && Array.isArray(args.items)) {
-      addProposedTitles(
-        titles,
-        args.items.map((item) => item?.title)
-      );
-      return;
-    }
-
     if (call?.name === "batch_search_tmdb" && Array.isArray(args.queries)) {
       addProposedTitles(
         titles,
@@ -306,13 +241,64 @@ function collectProposedTitlesFromFunctionCalls(functionCalls) {
       );
       return;
     }
-
-    if (call?.name === "search_tmdb") {
-      addProposedTitles(titles, [args.query]);
-    }
   });
 
   return titles;
+}
+
+function normalizeBatchSearchQueryForSignature(query) {
+  const source = query && typeof query === "object" ? query : {};
+  const normalizedYear = parseStrictInteger(source.year);
+
+  return {
+    query:
+      typeof source.query === "string"
+        ? source.query.trim().toLowerCase()
+        : source.query == null
+          ? ""
+          : String(source.query).trim().toLowerCase(),
+    type:
+      typeof source.type === "string"
+        ? source.type.trim().toLowerCase()
+        : source.type == null
+          ? ""
+          : String(source.type).trim().toLowerCase(),
+    year:
+      normalizedYear !== null
+        ? normalizedYear
+        : source.year == null
+          ? null
+          : String(source.year).trim().toLowerCase(),
+  };
+}
+
+function computeToolBatchSignature(functionCalls) {
+  if (!Array.isArray(functionCalls) || functionCalls.length === 0) {
+    return "";
+  }
+
+  const callSignatures = functionCalls
+    .map((call) => {
+      if (call?.name === "batch_search_tmdb") {
+        const queries = Array.isArray(call?.args?.queries) ? call.args.queries : [];
+        const normalizedQueries = queries
+          .map((query) => normalizeBatchSearchQueryForSignature(query))
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+
+        return JSON.stringify({
+          toolName: call.name,
+          queries: normalizedQueries,
+        });
+      }
+
+      return JSON.stringify({
+        toolName: call?.name || "",
+        args: call?.args,
+      });
+    })
+    .sort();
+
+  return callSignatures.join("|");
 }
 
 function recordProposedTitlesFromRecommendations(recommendations, proposedTitles) {
@@ -322,33 +308,218 @@ function recordProposedTitlesFromRecommendations(recommendations, proposedTitles
 
   addProposedTitles(
     proposedTitles,
-    recommendations.map((item) => item?.name || item?.title)
+    recommendations
+      .filter(
+        (item) =>
+          Object.prototype.toString.call(item) === "[object Object]" &&
+          typeof item.title === "string" &&
+          item.title.trim().length > 0
+      )
+      .map((item) => item.title)
   );
 }
 
-function buildRefinementMessage({
-  neededCount,
-  droppedWatched,
-  droppedNoId,
-  droppedDuplicates,
-  recentProposedIds,
-  acceptedItems,
-}) {
-  const watchedIds = normalizeDroppedItems(droppedWatched).map(formatDroppedIdentity);
-  const acceptedText =
-    Array.isArray(acceptedItems) && acceptedItems.length > 0
-      ? formatAcceptedItemsForMessage(acceptedItems)
-      : "(none)";
+function getTurnTitle(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
 
-  return [
-    `Need ${neededCount} more unwatched items.`,
-    `Already accepted (DO NOT re-propose): ${acceptedText}`,
-    `Already watched this turn: ${watchedIds.length > 0 ? watchedIds.join(", ") : "(none)"}`,
-    `No tmdb_id this turn: ${countDroppedItems(droppedNoId)}`,
-    `Duplicate proposals this turn: ${countDroppedItems(droppedDuplicates)}`,
-    `Recent proposed IDs: ${recentProposedIds.length > 0 ? recentProposedIds.join(", ") : "(none)"}`,
-    "Refine the next proposal set and avoid repeating any IDs above.",
-  ].join("\n");
+  return normalizeProposedTitle(
+    item.title || item.name || item.original_title || item.original_name
+  );
+}
+
+function getTurnTitleKey(item) {
+  const title = getTurnTitle(item);
+  return title ? title.toLowerCase() : "";
+}
+
+function normalizeIdentityToken(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLowerCase() : null;
+}
+
+function getTurnItemType(item, fallbackType = "movie") {
+  return (
+    normalizeRecommendationType(item?.type) ||
+    normalizeRecommendationType(fallbackType) ||
+    "movie"
+  );
+}
+
+function getTurnItemYear(item) {
+  const year = parseStrictInteger(item?.year);
+  return year !== null && year > 0 ? year : null;
+}
+
+function getTurnPrimaryKey(item, fallbackType) {
+  const tmdb_id = parseStrictInteger(item?.tmdb_id ?? item?.tmdbId ?? item?.ids?.tmdb ?? null);
+  if (tmdb_id === null || tmdb_id <= 0) {
+    return null;
+  }
+
+  return `${getTurnItemType(item, fallbackType)}:${tmdb_id}`;
+}
+
+function getTurnProposalTokens(item, fallbackType) {
+  const tokens = [];
+  const title = getTurnTitle(item);
+  const normalizedTitle = normalizeIdentityToken(title);
+  const year = getTurnItemYear(item);
+  const type = getTurnItemType(item, fallbackType);
+  const tmdbKey = getTurnPrimaryKey(item, fallbackType);
+
+  if (tmdbKey) {
+    tokens.push(tmdbKey);
+  }
+
+  if (normalizedTitle) {
+    tokens.push(`${type}:${normalizedTitle}${year !== null ? `:${year}` : ""}`);
+  }
+
+  return [...new Set(tokens.filter(Boolean))];
+}
+
+function buildProposedIdentitySet(values) {
+  const identitySet = new Set();
+
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = normalizeIdentityToken(
+      typeof value === "string"
+        ? value
+        : value && (value.title || value.name || value.original_title || value.original_name)
+    );
+
+    if (normalized) {
+      identitySet.add(normalized);
+    }
+  });
+
+  return identitySet;
+}
+
+function addProposedTokens(target, tokens) {
+  addProposedTitles(target, tokens);
+}
+
+function applyTurnFilter(items, ctx = {}) {
+  const collected = Array.isArray(ctx.collected) ? ctx.collected : [];
+  const proposedTitles = Array.isArray(ctx.proposedTitles) ? ctx.proposedTitles : [];
+  const filterWatched = ctx.filterWatched !== false;
+  const requestedType = ctx.type;
+  const collectedIdentitySet = new Set(
+    collected.map((item) => getTurnPrimaryKey(item, requestedType)).filter(Boolean)
+  );
+  const proposedIdentitySet = buildProposedIdentitySet(proposedTitles);
+  const watchedIdentitySet =
+    filterWatched && ctx.traktWatchedIdSet instanceof Set && ctx.traktWatchedIdSet.size > 0
+      ? ctx.traktWatchedIdSet
+      : null;
+  const ratedIdentitySet =
+    filterWatched && ctx.traktRatedIdSet instanceof Set && ctx.traktRatedIdSet.size > 0
+      ? ctx.traktRatedIdSet
+      : null;
+  const historyIdentitySet =
+    filterWatched && ctx.traktHistoryIdSet instanceof Set && ctx.traktHistoryIdSet.size > 0
+      ? ctx.traktHistoryIdSet
+      : null;
+
+  const accepted = [];
+  let rejectedCount = 0;
+  let droppedCollectedCount = 0;
+  let droppedProposedCount = 0;
+  let droppedWatchedCount = 0;
+  let droppedRatedCount = 0;
+  const seenThisTurnIdentitySet = new Set();
+
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const proposalTokens = getTurnProposalTokens(item, requestedType);
+    const currentTitle = getTurnTitle(item);
+    const currentYear = getTurnItemYear(item);
+    const tmdb_id = parseStrictInteger(item?.tmdb_id ?? item?.tmdbId ?? item?.ids?.tmdb ?? null);
+    const type = getTurnItemType(item, requestedType);
+    const primaryKey = tmdb_id !== null && tmdb_id > 0 ? `${type}:${tmdb_id}` : null;
+    const itemKeys = buildMediaIdentityKeys({
+      type,
+      tmdb_id,
+      imdb_id: item?.imdb_id ?? item?.imdbId ?? item?.ids?.imdb ?? null,
+      title: currentTitle,
+      year: currentYear,
+    });
+    const comparisonTokens = [...proposalTokens];
+    const normalizedTitle = normalizeIdentityToken(currentTitle);
+    if (normalizedTitle && currentYear === null) {
+      comparisonTokens.push(normalizedTitle);
+    }
+    const proposedIdentityTokens = comparisonTokens
+      .map(normalizeIdentityToken)
+      .filter(Boolean);
+    const isDuplicateProposed = proposedIdentityTokens.some(
+      (token) => proposedIdentitySet.has(token) || seenThisTurnIdentitySet.has(token)
+    );
+
+    addProposedTokens(proposedTitles, proposalTokens);
+    proposedIdentityTokens.forEach((token) => {
+      proposedIdentitySet.add(token);
+      seenThisTurnIdentitySet.add(token);
+    });
+
+    if (primaryKey && collectedIdentitySet.has(primaryKey)) {
+      rejectedCount += 1;
+      droppedCollectedCount += 1;
+      return;
+    }
+
+    if (isDuplicateProposed) {
+      rejectedCount += 1;
+      droppedProposedCount += 1;
+      return;
+    }
+
+    if (watchedIdentitySet && setHasIdentity(watchedIdentitySet, ...itemKeys)) {
+      rejectedCount += 1;
+      droppedWatchedCount += 1;
+      return;
+    }
+
+    if (historyIdentitySet && setHasIdentity(historyIdentitySet, ...itemKeys)) {
+      rejectedCount += 1;
+      droppedWatchedCount += 1;
+      return;
+    }
+
+    if (ratedIdentitySet && setHasIdentity(ratedIdentitySet, ...itemKeys)) {
+      rejectedCount += 1;
+      droppedRatedCount += 1;
+      return;
+    }
+
+    accepted.push({
+      ...item,
+      type,
+      title: item?.title || item?.name || currentTitle,
+      name: item?.name || item?.title || currentTitle,
+      tmdb_id,
+    });
+
+    if (primaryKey) {
+      collectedIdentitySet.add(primaryKey);
+    }
+  });
+
+  return {
+    accepted,
+    proposedTitles,
+    droppedCollectedCount,
+    droppedProposedCount,
+    droppedWatchedCount,
+    droppedRatedCount,
+    rejectedCount,
+  };
 }
 
 function extractModelText(response) {
@@ -467,6 +638,7 @@ async function callGemini(chat, message, meta = {}) {
         const functionCalls = extractFunctionCalls(response);
         logger.agent("RESPONSE_RECEIVED", {
           turn: meta.turn ?? 0,
+          toolRound: meta.toolRound ?? 0,
           hasText: !!text,
           hasFunctionCalls: !!functionCalls?.length,
           functionCallNames: functionCalls?.map((fc) => fc.name),
@@ -475,6 +647,7 @@ async function callGemini(chat, message, meta = {}) {
         });
         logger.agent("AGENT_RAW_RESPONSE", {
           turn: meta.turn ?? 0,
+          toolRound: meta.toolRound ?? 0,
           rawText: text,
         });
         return response;
@@ -485,10 +658,12 @@ async function callGemini(chat, message, meta = {}) {
         });
         logger.agent("LOOP_ERROR", {
           turn: meta.turn ?? 0,
+          toolRound: meta.toolRound ?? 0,
           error: error.message,
           stack: error.stack,
         });
         error.status = error.httpStatus || error.status || 500;
+        error.fromGemini = true;
         throw error;
       }
     },
@@ -513,12 +688,12 @@ async function runAgentLoop(dependencies = {}) {
     numResults,
     traktWatchedIdSet,
     traktRatedIdSet,
+    traktHistoryIdSet,
     filterCandidates,
     toolDeclarations = [],
     executeTools,
     searchTMDB,
     fetchTraktWatchedAndRated,
-    isItemWatchedOrRated,
     processPreferencesInParallel,
     tmdbCache,
     traktCache,
@@ -542,18 +717,24 @@ async function runAgentLoop(dependencies = {}) {
     query: userQuery,
     model: modelName,
     numResults: resolvedNumResults,
-    traktWatchedCount:
+    traktWatchedKeysCount:
       traktWatchedIdSet instanceof Set
         ? traktWatchedIdSet.size
         : Array.isArray(traktWatchedIdSet)
           ? traktWatchedIdSet.length
           : traktWatchedIdSet?.length,
-    traktRatedCount:
+    traktRatedKeysCount:
       traktRatedIdSet instanceof Set
         ? traktRatedIdSet.size
         : Array.isArray(traktRatedIdSet)
           ? traktRatedIdSet.length
           : traktRatedIdSet?.length,
+    traktHistoryKeysCount:
+      traktHistoryIdSet instanceof Set
+        ? traktHistoryIdSet.size
+        : Array.isArray(traktHistoryIdSet)
+          ? traktHistoryIdSet.length
+          : traktHistoryIdSet?.length,
     maxTurns,
     filterWatched,
   });
@@ -562,12 +743,14 @@ async function runAgentLoop(dependencies = {}) {
   let turns = 0;
   let toolCalls = 0;
   let collected = [];
-  let proposedIdSet = new Set();
   let proposedTitles = [];
   let droppedWatchedTotal = 0;
   let droppedNoIdTotal = 0;
+  let droppedMissingTitleTotal = 0;
+  let droppedCollectedTotal = 0;
+  let droppedProposedTotal = 0;
   let droppedDuplicatesTotal = 0;
-  let loopTerminationReason = "max_turns_exceeded";
+  let droppedRatedTotal = 0;
 
   function logSummary(success, reason, recommendations) {
     const summary = {
@@ -578,7 +761,11 @@ async function runAgentLoop(dependencies = {}) {
       collectedCount: collected.length,
       droppedWatched: droppedWatchedTotal,
       droppedNoId: droppedNoIdTotal,
+      droppedMissingTitle: droppedMissingTitleTotal,
+      droppedCollected: droppedCollectedTotal,
+      droppedProposed: droppedProposedTotal,
       droppedDuplicates: droppedDuplicatesTotal,
+      droppedRated: droppedRatedTotal,
       durationMs: Date.now() - startTime,
       model: modelName,
     };
@@ -596,6 +783,12 @@ async function runAgentLoop(dependencies = {}) {
         totalTurns: turns,
         terminationReason: reason || "success",
         collectedCount: collected.length,
+        droppedWatched: droppedWatchedTotal,
+        droppedNoId: droppedNoIdTotal,
+        droppedMissingTitle: droppedMissingTitleTotal,
+        droppedCollected: droppedCollectedTotal,
+        droppedProposed: droppedProposedTotal,
+        droppedRated: droppedRatedTotal,
         elapsed: Date.now() - startTime,
       });
       logger.info("Agent loop complete", summary);
@@ -604,123 +797,40 @@ async function runAgentLoop(dependencies = {}) {
         totalTurns: turns,
         terminationReason: reason || "error",
         collectedCount: collected.length,
+        droppedWatched: droppedWatchedTotal,
+        droppedNoId: droppedNoIdTotal,
+        droppedMissingTitle: droppedMissingTitleTotal,
+        droppedCollected: droppedCollectedTotal,
+        droppedProposed: droppedProposedTotal,
+        droppedRated: droppedRatedTotal,
         elapsed: Date.now() - startTime,
       });
       logger.warn("Agent loop complete", summary);
     }
   }
 
-  function processFinalTextResponse(textResponse, turn) {
-    const text = extractModelText(textResponse);
+  function finalizeResult(success, recommendations, reason) {
+    const result = { success, recommendations, reason };
+    logSummary(result.success, result.reason, result.recommendations);
+    return result;
+  }
 
-    if (!text) {
-      logger.warn("Agent returned an empty turn", { turn });
-      return { success: false, reason: "empty_turn" };
-    }
+  function buildTurnContext() {
+    return {
+      type,
+      query: userQuery,
+      numResults: resolvedNumResults,
+      collected,
+      proposedTitles,
+      gap: resolvedNumResults - collected.length,
+      discoveredGenres: dependencies.discoveredGenres,
+      genreAnalysis: dependencies.genreAnalysis,
+      favoritesContext: dependencies.favoritesContext,
+    };
+  }
 
-    let parsed;
-
-    try {
-      parsed = JSON.parse(text);
-    } catch (error) {
-      logger.warn("Agent final output was not valid JSON", {
-        error: error.message,
-        turn,
-      });
-      logger.agent("LOOP_ERROR", {
-        turn,
-        error: error.message,
-        stack: error.stack,
-      });
-      return { success: false, reason: "invalid_final_json" };
-    }
-
-    const recommendations = normalizeRecommendationList(parsed);
-    recordProposedTitlesFromRecommendations(recommendations, proposedTitles);
-
-    if (typeof filterCandidates !== "function") {
-      return {
-        success: true,
-        recommendations: recommendations.slice(0, resolvedNumResults),
-      };
-    }
-
-    let filtered;
-
-    try {
-      filtered = filterCandidates(recommendations);
-    } catch (error) {
-      logger.error("Agent candidate filtering failed", {
-        error: error.message,
-        turn,
-      });
-      logger.agent("LOOP_ERROR", {
-        turn,
-        error: error.message,
-        stack: error.stack,
-      });
-      return { success: false, reason: "filter_candidates_failed" };
-    }
-
-    logger.agent("FILTER_RESULT", {
-      turn,
-      candidatesProposed: recommendations.length,
-      candidatesAccepted: normalizeDroppedItems(filtered?.unwatched).length,
-      candidatesRejected:
-        recommendations.length - normalizeDroppedItems(filtered?.unwatched).length,
-      rejectionReasons: {
-        droppedWatched: filtered?.droppedWatched,
-        droppedNoId: filtered?.droppedNoId,
-        droppedDuplicates: filtered?.droppedDuplicates,
-        rejectionReasons: filtered?.rejectionReasons || filtered?.reasons,
-      },
-    });
-
-    const rawUnwatched = normalizeDroppedItems(filtered?.unwatched);
-    const turnDroppedWatched = normalizeDroppedItems(filtered?.droppedWatched);
-    const turnDroppedWatchedCount =
-      typeof filtered?.droppedWatched === "number"
-        ? filtered.droppedWatched
-        : turnDroppedWatched.length;
-    const turnDroppedNoIdCount = countDroppedItems(filtered?.droppedNoId);
-    let turnDroppedDuplicateCount = countDroppedItems(filtered?.droppedDuplicates);
-
-    const novelUnwatched = [];
-    let crossTurnDuplicateCount = 0;
-
-    rawUnwatched.forEach((item) => {
-      if (isDuplicateAcrossTurns(item, proposedIdSet)) {
-        crossTurnDuplicateCount += 1;
-        return;
-      }
-
-      novelUnwatched.push(item);
-    });
-
-    turnDroppedDuplicateCount += crossTurnDuplicateCount;
-    droppedWatchedTotal += turnDroppedWatchedCount;
-    droppedNoIdTotal += turnDroppedNoIdCount;
-    droppedDuplicatesTotal += turnDroppedDuplicateCount;
-
-    recommendations.forEach((item) => addMediaIdentityKeys(proposedIdSet, item));
-
-    if (novelUnwatched.length > 0) {
-      const remainingSlots = Math.max(0, resolvedNumResults - collected.length);
-      collected.push(...novelUnwatched.slice(0, remainingSlots));
-    }
-
-    if (collected.length >= resolvedNumResults) {
-      return {
-        success: true,
-        recommendations: collected.slice(0, resolvedNumResults),
-      };
-    }
-
-    if (novelUnwatched.length === 0) {
-      return { success: true, recommendations: collected, reason: "agent_stuck" };
-    }
-
-    return { success: true, recommendations: collected, reason: "max_turns_exceeded" };
+  function buildNextTurnMessage() {
+    return buildTurnMessage(buildTurnContext());
   }
 
   logger.info("Starting agent recommendation loop", {
@@ -741,22 +851,17 @@ async function runAgentLoop(dependencies = {}) {
 
   logger.agent("SYSTEM_PROMPT", systemPrompt);
 
-  const geminiToolDeclarations = filterWatched
-    ? toolDeclarations
-    : toolDeclarations.filter((tool) => tool?.name !== "check_if_watched");
-
   const chat = ai.chats.create({
     model: modelName,
     config: {
       systemInstruction: systemPrompt,
-      tools: [{ functionDeclarations: geminiToolDeclarations }],
+      tools: [{ functionDeclarations: toolDeclarations }],
     },
   });
 
   const runtime = {
     searchTMDB,
     fetchTraktWatchedAndRated,
-    isItemWatchedOrRated,
     processPreferencesInParallel,
     caches: {
       tmdbCache,
@@ -768,403 +873,458 @@ async function runAgentLoop(dependencies = {}) {
     traktAuth,
     traktUsername,
     traktAccessToken,
-    ...(filterWatched
-      ? {
-          traktWatchedIdSet,
-          traktRatedIdSet,
-        }
-      : {}),
+    traktWatchedIdSet,
+    traktRatedIdSet,
+    traktHistoryIdSet,
   };
 
-  const initialMessage = buildAgentInitialMessage({
-    type,
-    query: userQuery,
-    numResults: resolvedNumResults,
-    // Keep common prompt-builder inputs available if callers already pass them.
-    currentYear: dependencies.currentYear,
-    discoveredGenres: dependencies.discoveredGenres,
-    genreCriteria: dependencies.genreCriteria,
-  });
-
-  logger.agent("INITIAL_MESSAGE", initialMessage);
-
-  let response;
-  try {
-    response = await callGemini(chat, initialMessage, { turn: 0 });
-  } catch (error) {
-    if (isFunctionCallingUnsupportedError(error)) {
-      logger.warn("Agent model does not support function calling", {
-        modelName,
-        error: error.message,
-      });
-      const result = { success: false, reason: "function_calling_unsupported" };
-      logSummary(result.success, result.reason);
-      return result;
+  async function executeAgentTurn({
+    chat: turnChat,
+    turnNumber,
+    turnContext,
+    runtime: turnRuntime,
+    maxToolRoundsPerTurn = DEFAULT_MAX_TOOL_ROUNDS_PER_TURN,
+  }) {
+    function buildParseViolation(parseError) {
+      return {
+        type: "parse_error",
+        code: typeof parseError === "string" ? parseError : "unknown_parse_error",
+      };
     }
 
-    throw error;
-  }
+    function evaluateTextResponse(rawText, gap) {
+      const parseResult = parseTurnResponse(rawText);
 
-  for (let turn = 0; turn < maxTurns; turn += 1) {
-    turns += 1;
-    logger.debug("Agent turn", { turn: turns, maxTurns });
-    logger.agent("TURN_START", { turn: turns, collectedSoFar: collected.length });
-
-    const functionCalls = extractFunctionCalls(response);
-
-    if (functionCalls.length === 0) {
-      const text = extractModelText(response);
-
-      if (!text) {
-        logger.warn("Agent returned an empty turn", { turn: turns });
-        const result = { success: false, reason: "empty_turn" };
-        logSummary(result.success, result.reason);
-        return result;
+      if (parseResult.error) {
+        return {
+          rawText,
+          parseResult,
+          parsedItems: [],
+          validItems: [],
+          violations: [buildParseViolation(parseResult.error)],
+        };
       }
 
-      let parsed;
+      const parsedItems = Array.isArray(parseResult.items) ? parseResult.items : [];
+      const validation = validateAgentItems(parsedItems, {
+        gap,
+        schema: AGENT_ITEM_SCHEMA,
+      });
+
+      return {
+        rawText,
+        parseResult,
+        parsedItems,
+        validItems: validation.validItems,
+        violations: Array.isArray(validation.violations) ? validation.violations : [],
+      };
+    }
+
+    const effectiveMaxToolRoundsPerTurn = Math.max(
+      1,
+      parseStrictInteger(maxToolRoundsPerTurn) ?? DEFAULT_MAX_TOOL_ROUNDS_PER_TURN
+    );
+    let toolRoundsUsed = 0;
+    let message = buildTurnMessage(turnContext);
+    let contractRetryUsed = false;
+    let emptyResponseNudgeUsed = false;
+    let nudgeReason = null;
+    let toolLoopDetected = false;
+    let lastToolBatchSignature = null;
+    let violationsBeforeRetry = [];
+    let violationsAfterRetry = [];
+
+    function buildTurnResult({
+      rawText = "",
+      parseResult = parseTurnResponse(rawText),
+      parsedRawItems = [],
+      parsedItems = [],
+      endedByText = false,
+      toolLoopExhausted = false,
+    }) {
+      return {
+        rawText,
+        parseResult,
+        parsedRawItems,
+        parsedItems,
+        toolRoundsUsed,
+        endedByText,
+        toolLoopExhausted,
+        contractRetryUsed,
+        emptyResponseNudgeUsed,
+        nudgeReason,
+        toolLoopDetected,
+        violationsBeforeRetry,
+        violationsAfterRetry,
+      };
+    }
+
+    function buildNudgeMessage(reason, gap) {
+      if (reason === "repeated_batch") {
+        return [
+          "You repeated the same tool batch as the previous round.",
+          "You already have enough information from previous tool calls.",
+          `Return now the JSON array with exactly ${gap} items conforming to the schema.`,
+          "Do not call more tools. Do not include prose or markdown. JSON array only.",
+        ].join(" ");
+      }
+
+      if (reason === "cap_reached") {
+        return [
+          "You have executed too many tool calls without producing a result.",
+          "You already have enough information from previous tool calls.",
+          `Return now the JSON array with exactly ${gap} items conforming to the schema.`,
+          "Do not call more tools. Do not include prose or markdown. JSON array only.",
+        ].join(" ");
+      }
+
+      return [
+        "The previous response was empty. You already received the tool results.",
+        `Return now the JSON array with exactly ${gap} items conforming to the schema.`,
+        "Do not call more tools. Do not include prose or markdown. JSON array only.",
+      ].join(" ");
+    }
+
+    async function handleTextResponse(rawText, gap) {
+      const firstEvaluation = evaluateTextResponse(rawText, gap);
+
+      if (firstEvaluation.violations.length > 0 && !contractRetryUsed) {
+        contractRetryUsed = true;
+        violationsBeforeRetry = firstEvaluation.violations;
+        toolRoundsUsed += 1;
+
+        if (toolRoundsUsed > effectiveMaxToolRoundsPerTurn) {
+          return buildTurnResult({
+            rawText: firstEvaluation.rawText,
+            parseResult: firstEvaluation.parseResult,
+            parsedRawItems: firstEvaluation.parsedItems,
+            parsedItems: firstEvaluation.validItems,
+            endedByText: true,
+            toolLoopExhausted: true,
+          });
+        }
+
+        const correctiveMessage = buildCorrectiveFeedback({
+          violations: firstEvaluation.violations,
+          gap,
+          schema: AGENT_ITEM_SCHEMA,
+        });
+        const retryResponse = await callGemini(turnChat, correctiveMessage, {
+          turn: turnNumber,
+          toolRound: toolRoundsUsed,
+        });
+        const retryRawText = extractModelText(retryResponse);
+        const retryHasText = typeof retryRawText === "string" && retryRawText.trim().length > 0;
+        const retryEvaluation = evaluateTextResponse(retryRawText, gap);
+
+        violationsAfterRetry = retryEvaluation.violations;
+
+        return buildTurnResult({
+          rawText: retryRawText,
+          parseResult: retryEvaluation.parseResult,
+          parsedRawItems: retryEvaluation.parsedItems,
+          parsedItems: retryEvaluation.validItems,
+          endedByText: retryHasText,
+          toolLoopExhausted: false,
+        });
+      }
+
+      return buildTurnResult({
+        rawText: firstEvaluation.rawText,
+        parseResult: firstEvaluation.parseResult,
+        parsedRawItems: firstEvaluation.parsedItems,
+        parsedItems: firstEvaluation.validItems,
+        endedByText: true,
+        toolLoopExhausted: false,
+      });
+    }
+
+    async function runNudge(reason, gap, options = {}) {
+      if (emptyResponseNudgeUsed) {
+        return null;
+      }
+
+      emptyResponseNudgeUsed = true;
+      nudgeReason = reason;
+      toolRoundsUsed += 1;
+
+      logger.agent("NUDGE_DISPATCHED", {
+        turn: turnNumber,
+        reason,
+        toolRoundsUsed,
+      });
+
+      const enforceCap = options.enforceCap !== false;
+
+      if (enforceCap && toolRoundsUsed > effectiveMaxToolRoundsPerTurn) {
+        return buildTurnResult({
+          rawText: "",
+          parseResult: parseTurnResponse(""),
+          parsedRawItems: [],
+          parsedItems: [],
+          endedByText: false,
+          toolLoopExhausted: true,
+        });
+      }
+
+      const response = await callGemini(
+        turnChat,
+        { text: buildNudgeMessage(reason, gap) },
+        {
+          turn: turnNumber,
+          toolRound: toolRoundsUsed,
+        }
+      );
+      const nudgeRawText = extractModelText(response);
+      const nudgeHasText = typeof nudgeRawText === "string" && nudgeRawText.trim().length > 0;
+
+      if (nudgeHasText) {
+        return handleTextResponse(nudgeRawText, gap);
+      }
+
+      return buildTurnResult({
+        rawText: "",
+        parseResult: parseTurnResponse(""),
+        parsedRawItems: [],
+        parsedItems: [],
+        endedByText: false,
+        toolLoopExhausted: options.exhaustOnNonText === true,
+      });
+    }
+
+    while (true) {
+      let response;
 
       try {
-        parsed = JSON.parse(text);
+        response = await callGemini(turnChat, message, {
+          turn: turnNumber,
+          toolRound: toolRoundsUsed,
+        });
       } catch (error) {
-        logger.warn("Agent final output was not valid JSON", {
+        throw error;
+      }
+
+      const functionCalls = extractFunctionCalls(response);
+      const rawText = extractModelText(response);
+      const hasText = typeof rawText === "string" && rawText.trim().length > 0;
+      const isToolOnly = functionCalls.length > 0 && !hasText;
+
+      if (hasText) {
+        const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
+        return handleTextResponse(rawText, gap);
+      }
+
+      if (!isToolOnly) {
+        if (toolRoundsUsed > 0) {
+          const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
+          const nudgeResult = await runNudge("empty_response_post_tool", gap, {
+            exhaustOnNonText: false,
+          });
+          if (nudgeResult) {
+            return nudgeResult;
+          }
+        }
+
+        return buildTurnResult({
+          rawText: "",
+          parseResult: parseTurnResponse(""),
+          parsedRawItems: [],
+          parsedItems: [],
+          endedByText: false,
+          toolLoopExhausted: false,
+        });
+      }
+
+      if (typeof executeTools !== "function") {
+        throw new Error(
+          "Agent tool executor is required when Gemini returns function calls"
+        );
+      }
+
+      const currentSignature = computeToolBatchSignature(functionCalls);
+      const currentToolRound = toolRoundsUsed;
+
+      if (lastToolBatchSignature !== null && currentSignature === lastToolBatchSignature) {
+        toolLoopDetected = true;
+        logger.agent("TOOL_LOOP_DETECTED", {
+          turn: turnNumber,
+          toolRound: currentToolRound,
+          signature: currentSignature.slice(0, 200),
+        });
+
+        const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
+        const nudgeResult = await runNudge("repeated_batch", gap, {
+          exhaustOnNonText: true,
+        });
+        if (nudgeResult) {
+          return nudgeResult;
+        }
+
+        return buildTurnResult({
+          rawText: "",
+          parseResult: parseTurnResponse(""),
+          parsedRawItems: [],
+          parsedItems: [],
+          endedByText: false,
+          toolLoopExhausted: false,
+        });
+      }
+
+      toolCalls += functionCalls.length;
+      functionCalls.forEach((call) => {
+        logger.agent("TOOL_CALL_REQUEST", {
+          turn: turnNumber,
+          toolRound: currentToolRound,
+          toolName: call.name,
+          args: call.args,
+        });
+      });
+
+      addProposedTitles(
+        proposedTitles,
+        collectProposedTitlesFromFunctionCalls(functionCalls)
+      );
+
+      let toolResults;
+
+      try {
+        toolResults = await executeTools(functionCalls, turnRuntime);
+      } catch (error) {
+        logger.error("Agent tool execution failed", {
           error: error.message,
-          turn: turns,
+          turn: turnNumber,
+          toolRound: currentToolRound,
         });
         logger.agent("LOOP_ERROR", {
-          turn: turns,
+          turn: turnNumber,
+          toolRound: currentToolRound,
           error: error.message,
           stack: error.stack,
         });
-        const result = { success: false, reason: "invalid_final_json" };
-        logSummary(result.success, result.reason);
-        return result;
+
+        if (collected.length > 0) {
+          logger.agent("LOOP_ERROR_PARTIAL", {
+            turn: turnNumber,
+            toolRound: currentToolRound,
+            error: error.message,
+            stack: error.stack,
+            collectedSoFar: collected.length,
+          });
+          const partialError = error instanceof Error ? error : new Error(String(error));
+          partialError.reason = "api_error_partial";
+          throw partialError;
+        }
+
+        const toolError = error instanceof Error ? error : new Error(String(error));
+        toolError.reason = "all_tools_failed";
+        throw toolError;
       }
 
-      const recommendations = normalizeRecommendationList(parsed);
-      recordProposedTitlesFromRecommendations(recommendations, proposedTitles);
+      const normalizedToolParts = normalizeToolResultParts(toolResults);
+      const failedToolCount = countToolFailures(normalizedToolParts);
+      const hasSuccessfulToolResponse = normalizedToolParts.some((part) => {
+        const response = part?.functionResponse?.response;
+        return (
+          response &&
+          !(response.error || response.success === false || response.ok === false)
+        );
+      });
 
-      if (typeof filterCandidates !== "function") {
-        const legacyResult = { success: true, recommendations: recommendations.slice(0, resolvedNumResults) };
-        logSummary(legacyResult.success, undefined, legacyResult.recommendations);
-        return legacyResult;
-      }
-
-      let filtered;
-      try {
-        filtered = filterCandidates(recommendations);
-      } catch (error) {
-        logger.error("Agent candidate filtering failed", {
-          error: error.message,
-          turn: turns,
+      if (!hasSuccessfulToolResponse || failedToolCount === normalizedToolParts.length) {
+        logger.warn("All tool invocations failed for this turn", {
+          turn: turnNumber,
+          toolRound: currentToolRound,
+          toolCount: functionCalls.length,
         });
-        logger.agent("LOOP_ERROR", {
-          turn: turns,
-          error: error.message,
-          stack: error.stack,
-        });
-        const result = { success: false, reason: "filter_candidates_failed" };
-        logSummary(result.success, result.reason);
-        return result;
+        const toolError = new Error("All tool invocations failed for this turn");
+        toolError.reason = "all_tools_failed";
+        throw toolError;
       }
 
-      logger.agent("FILTER_RESULT", {
-        turn: turns,
-        candidatesProposed: recommendations.length,
-        candidatesAccepted: normalizeDroppedItems(filtered?.unwatched).length,
-        candidatesRejected:
-          recommendations.length - normalizeDroppedItems(filtered?.unwatched).length,
-        rejectionReasons: {
-          droppedWatched: filtered?.droppedWatched,
-          droppedNoId: filtered?.droppedNoId,
-          droppedDuplicates: filtered?.droppedDuplicates,
-          rejectionReasons: filtered?.rejectionReasons || filtered?.reasons,
+      lastToolBatchSignature = currentSignature;
+
+      logger.agent("TOOL_CALL_RESPONSE", {
+        turn: turnNumber,
+        toolRound: currentToolRound,
+        toolName:
+          functionCalls.length === 1
+            ? functionCalls[0].name
+            : functionCalls.map((call) => call.name),
+        resultSummary: {
+          count: normalizedToolParts.length,
+          failedToolCount,
+          result: normalizedToolParts,
         },
       });
 
-      const rawUnwatched = normalizeDroppedItems(filtered?.unwatched);
-      const turnDroppedWatched = normalizeDroppedItems(filtered?.droppedWatched);
-      const turnDroppedWatchedCount =
-        typeof filtered?.droppedWatched === "number"
-          ? filtered.droppedWatched
-          : turnDroppedWatched.length;
-      const turnDroppedNoIdCount = countDroppedItems(filtered?.droppedNoId);
-      let turnDroppedDuplicateCount = countDroppedItems(filtered?.droppedDuplicates);
+      toolRoundsUsed += 1;
 
-      const novelUnwatched = [];
-      let crossTurnDuplicateCount = 0;
-
-      rawUnwatched.forEach((item) => {
-        if (isDuplicateAcrossTurns(item, proposedIdSet)) {
-          crossTurnDuplicateCount += 1;
-          return;
-        }
-
-        novelUnwatched.push(item);
-      });
-
-      turnDroppedDuplicateCount += crossTurnDuplicateCount;
-      droppedWatchedTotal += turnDroppedWatchedCount;
-      droppedNoIdTotal += turnDroppedNoIdCount;
-      droppedDuplicatesTotal += turnDroppedDuplicateCount;
-
-      recommendations.forEach((item) => addMediaIdentityKeys(proposedIdSet, item));
-
-      if (novelUnwatched.length > 0) {
-        const remainingSlots = Math.max(0, resolvedNumResults - collected.length);
-        collected.push(...novelUnwatched.slice(0, remainingSlots));
-      }
-
-      if (collected.length >= resolvedNumResults) {
-        const result = {
-          success: true,
-          recommendations: collected.slice(0, resolvedNumResults),
-        };
-        logSummary(result.success, undefined, result.recommendations);
-        return result;
-      }
-
-      const usefulItemsThisTurn = novelUnwatched.length;
-      if (usefulItemsThisTurn === 0) {
-        const result = { success: true, recommendations: collected, reason: "agent_stuck" };
-        logSummary(result.success, result.reason, result.recommendations);
-        return result;
-      }
-
-      if (turn + 1 >= maxTurns) {
-        const result = {
-          success: true,
-          recommendations: collected,
-          reason: "max_turns_exceeded",
-        };
-        logSummary(result.success, result.reason, result.recommendations);
-        return result;
-      }
-
-      const refinementMessage = buildRefinementMessage({
-        neededCount: Math.max(0, resolvedNumResults - collected.length),
-        droppedWatched: turnDroppedWatched,
-        droppedNoId: turnDroppedNoIdCount,
-        droppedDuplicates: turnDroppedDuplicateCount,
-        recentProposedIds: getRecentProposedIds(proposedIdSet, 50),
-        acceptedItems: collected.map((item) => ({
-          name: item.name || item.title,
-          year: item.year,
-          tmdb_id: item.tmdb_id,
-        })),
-      });
-
-      logger.agent("REFINEMENT_SENT", refinementMessage);
-
-      try {
-        response = await callGemini(chat, refinementMessage, { turn: turns });
-      } catch (error) {
-        if (isFunctionCallingUnsupportedError(error)) {
-          logger.warn("Agent model does not support function calling", {
-            modelName,
-            error: error.message,
-          });
-          const result = { success: false, reason: "function_calling_unsupported" };
-          logSummary(result.success, result.reason);
-          return result;
-        }
-
-        if (collected.length > 0) {
-          logger.error("Agent refinement call failed after collecting partial results", {
-            error: error.message,
-            turn: turns,
-            collectedSoFar: collected.length,
-          });
-          logger.agent("LOOP_ERROR_PARTIAL", {
-            turn: turns,
-            error: error.message,
-            stack: error.stack,
-            collectedSoFar: collected.length,
-          });
-          loopTerminationReason = "api_error_partial";
-          break;
-        }
-
-        throw error;
-      }
-
-      continue;
-    }
-
-    if (turn + 1 >= maxTurns) {
-      logger.agent("FINALIZATION_FORCED", {
-        turn,
-        reason: "last_turn_had_tool_calls",
-      });
-
-      const finalizationMessage =
-        collected.length > 0
-          ? `You have used all available tool turns. Items already accepted: ${formatAcceptedItemsForMessage(
-              collected.map((item) => ({
-                name: item.name || item.title,
-                year: item.year,
-                tmdb_id: item.tmdb_id,
-              }))
-            )}. Based on the information you have gathered so far, return your final recommendations now as a JSON array. Include the already-accepted items plus any additional unwatched items you've identified. Do not call any more tools.`
-          : "You have used all available tool turns. Based on the information you have gathered so far, return your final recommendations now as a JSON array. Do not call any more tools.";
-
-      logger.agent("REFINEMENT_SENT", finalizationMessage);
-
-      let finalizationResponse;
-
-      try {
-        finalizationResponse = await callGemini(chat, finalizationMessage, { turn: turns });
-      } catch (error) {
-        if (isFunctionCallingUnsupportedError(error)) {
-          logger.warn("Agent model does not support function calling", {
-            modelName,
-            error: error.message,
-          });
-          const result = { success: false, reason: "function_calling_unsupported" };
-          logSummary(result.success, result.reason);
-          return result;
-        }
-
-        if (collected.length > 0) {
-          logger.error("Agent finalization call failed after collecting partial results", {
-            error: error.message,
-            turn: turns,
-            collectedSoFar: collected.length,
-          });
-          logger.agent("LOOP_ERROR_PARTIAL", {
-            turn: turns,
-            error: error.message,
-            stack: error.stack,
-            collectedSoFar: collected.length,
-          });
-          loopTerminationReason = "api_error_partial";
-          break;
-        }
-
-        throw error;
-      }
-
-      const finalizationFunctionCalls = extractFunctionCalls(finalizationResponse);
-
-      if (finalizationFunctionCalls.length > 0) {
-        logger.warn("Agent finalization response still requested tools", {
-          turn: turns,
-          toolCount: finalizationFunctionCalls.length,
+      if (toolRoundsUsed >= effectiveMaxToolRoundsPerTurn) {
+        const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
+        const nudgeResult = await runNudge("cap_reached", gap, {
+          exhaustOnNonText: true,
+          enforceCap: false,
         });
-        break;
+        if (nudgeResult) {
+          return nudgeResult;
+        }
+
+        return buildTurnResult({
+          rawText: "",
+          parseResult: parseTurnResponse(""),
+          parsedRawItems: [],
+          parsedItems: [],
+          endedByText: false,
+          toolLoopExhausted: true,
+        });
       }
 
-      const result = processFinalTextResponse(finalizationResponse, turns);
-      if (result.success) {
-        logSummary(result.success, result.reason, result.recommendations);
-      } else {
-        logSummary(result.success, result.reason);
-      }
-      return result;
+      message = [
+        ...normalizedToolParts,
+        {
+          text: buildTurnMessage(turnContext),
+        },
+      ];
     }
+  }
 
-    toolCalls += functionCalls.length;
+  const initialMessage = buildTurnMessage(buildTurnContext());
+  logger.agent("INITIAL_MESSAGE", initialMessage);
 
-    functionCalls.forEach((call) => {
-      logger.agent("TOOL_CALL_REQUEST", {
-        turn: turns,
-        toolName: call.name,
-        args: call.args,
-      });
-    });
+  for (let turn = 1; turn <= maxTurns; turn += 1) {
+    turns = turn;
+    logger.debug("Agent turn", { turn: turns, maxTurns });
+    logger.agent("TURN_START", { turn: turns, collectedSoFar: collected.length });
 
-    addProposedTitles(proposedTitles, collectProposedTitlesFromFunctionCalls(functionCalls));
-
-    if (typeof executeTools !== "function") {
-      throw new Error("Agent tool executor is required when Gemini returns function calls");
-    }
-
-    let toolResults;
+    let turnResult;
 
     try {
-      toolResults = await executeTools(functionCalls, runtime);
-    } catch (error) {
-      logger.error("Agent tool execution failed", {
-        error: error.message,
-        turn: turns,
+      turnResult = await executeAgentTurn({
+        chat,
+        turnNumber: turns,
+        turnContext: buildTurnContext(),
+        runtime,
+        maxToolRoundsPerTurn: DEFAULT_MAX_TOOL_ROUNDS_PER_TURN,
       });
-      logger.agent("LOOP_ERROR", {
-        turn: turns,
-        error: error.message,
-        stack: error.stack,
-      });
-      const result = { success: false, reason: "all_tools_failed" };
-      logSummary(result.success, result.reason);
-      return result;
-    }
-
-    const normalizedToolParts = normalizeToolResultParts(toolResults);
-    const failedToolCount = countToolFailures(normalizedToolParts);
-    const hasSuccessfulToolResponse = normalizedToolParts.some((part) => {
-      const response = part?.functionResponse?.response;
-      return (
-        response &&
-        !(response.error || response.success === false || response.ok === false)
-      );
-    });
-
-    if (!hasSuccessfulToolResponse || failedToolCount === normalizedToolParts.length) {
-      logger.warn("All tool invocations failed for this turn", {
-        turn: turns,
-        toolCount: functionCalls.length,
-      });
-      const result = { success: false, reason: "all_tools_failed" };
-      logSummary(result.success, result.reason);
-      return result;
-    }
-
-    logger.agent("TOOL_CALL_RESPONSE", {
-      turn: turns,
-      toolName: functionCalls.length === 1 ? functionCalls[0].name : functionCalls.map((call) => call.name),
-      resultSummary: {
-        count: normalizedToolParts.length,
-        failedToolCount,
-        result: normalizedToolParts,
-      },
-    });
-
-    const progressMessage =
-      collected.length > 0 || proposedTitles.length > 0
-        ? buildProgressFeedback({
-            acceptedItems: collected.map((item) => ({
-              name: item.name || item.title,
-              year: item.year,
-              tmdb_id: item.tmdb_id,
-            })),
-            neededCount: Math.max(0, resolvedNumResults - collected.length),
-            alreadyProposedTitles: [...new Set(proposedTitles)],
-          })
-        : null;
-
-    const toolResponseMessage = progressMessage
-      ? [...normalizedToolParts, { text: progressMessage }]
-      : normalizedToolParts;
-
-    try {
-      response = await callGemini(chat, toolResponseMessage, { turn: turns });
     } catch (error) {
       if (isFunctionCallingUnsupportedError(error)) {
         logger.warn("Agent model does not support function calling", {
           modelName,
           error: error.message,
         });
-        logger.agent("LOOP_ERROR", {
-          turn: turns,
-          error: error.message,
-          stack: error.stack,
-        });
-        const result = { success: false, reason: "function_calling_unsupported" };
-        logSummary(result.success, result.reason);
-        return result;
+        return finalizeResult(false, [], "function_calling_unsupported");
       }
 
-      if (collected.length > 0) {
-        logger.error("Agent tool response call failed after collecting partial results", {
+      if (error?.reason === "api_error_partial") {
+        return finalizeResult(true, collected, "api_error_partial");
+      }
+
+      if (error?.reason === "all_tools_failed") {
+        return finalizeResult(false, [], "all_tools_failed");
+      }
+
+      if (error?.fromGemini && collected.length > 0) {
+        logger.error("Agent turn failed after collecting partial results", {
           error: error.message,
           turn: turns,
           collectedSoFar: collected.length,
@@ -1175,24 +1335,103 @@ async function runAgentLoop(dependencies = {}) {
           stack: error.stack,
           collectedSoFar: collected.length,
         });
-        loopTerminationReason = "api_error_partial";
-        break;
+        return finalizeResult(true, collected, "api_error_partial");
       }
 
       throw error;
     }
+
+    recordProposedTitlesFromRecommendations(turnResult.parsedRawItems, proposedTitles);
+
+    const turnFilter = applyTurnFilter(turnResult.parsedItems, {
+      collected,
+      proposedTitles,
+      type,
+      filterWatched,
+      traktWatchedIdSet,
+      traktRatedIdSet,
+      traktHistoryIdSet,
+    });
+
+    collected.push(...turnFilter.accepted);
+    droppedNoIdTotal += 0;
+    droppedMissingTitleTotal += 0;
+    droppedCollectedTotal += turnFilter.droppedCollectedCount || 0;
+    droppedProposedTotal += turnFilter.droppedProposedCount || 0;
+    droppedWatchedTotal += turnFilter.droppedWatchedCount || 0;
+    droppedRatedTotal += turnFilter.droppedRatedCount || 0;
+    droppedDuplicatesTotal +=
+      (turnFilter.droppedCollectedCount || 0) + (turnFilter.droppedProposedCount || 0);
+
+    const gap = resolvedNumResults - collected.length;
+    logger.agent("TURN_RESULT", {
+      turn: turns,
+      toolRoundsUsed: turnResult.toolRoundsUsed,
+      parsedCount: Array.isArray(turnResult.parsedItems) ? turnResult.parsedItems.length : 0,
+      rawTextLength: turnResult.rawText.length,
+      rawTextSnippet: turnResult.rawText.slice(0, 240),
+      parseError: turnResult.parseResult?.error || null,
+      endedByText: turnResult.endedByText,
+      toolLoopExhausted: turnResult.toolLoopExhausted,
+      contractRetryUsed: !!turnResult.contractRetryUsed,
+      emptyResponseNudgeUsed: !!turnResult.emptyResponseNudgeUsed,
+      nudgeReason: turnResult.nudgeReason || null,
+      toolLoopDetected: !!turnResult.toolLoopDetected,
+      violationsBeforeRetry: Array.isArray(turnResult.violationsBeforeRetry)
+        ? turnResult.violationsBeforeRetry
+        : [],
+      violationsAfterRetry: Array.isArray(turnResult.violationsAfterRetry)
+        ? turnResult.violationsAfterRetry
+        : [],
+      acceptedCount: turnFilter.accepted.length,
+      rejectedCount: turnFilter.rejectedCount,
+      rejectedBreakdown: {
+        missingTmdb: 0,
+        missingTitle: 0,
+        duplicateCollected: turnFilter.droppedCollectedCount || 0,
+        duplicateProposed: turnFilter.droppedProposedCount || 0,
+        watched: turnFilter.droppedWatchedCount || 0,
+        rated: turnFilter.droppedRatedCount || 0,
+      },
+      gap,
+    });
+
+    if (collected.length >= resolvedNumResults) {
+      return finalizeResult(true, collected.slice(0, resolvedNumResults), "success");
+    }
+
+    if (turnResult.toolLoopExhausted) {
+      if (turns >= maxTurns) {
+        return finalizeResult(collected.length > 0, collected, "tool_loop_exhausted");
+      }
+
+      continue;
+    }
+
+    if (!turnResult.endedByText) {
+      continue;
+    }
   }
 
-  if (loopTerminationReason === "max_turns_exceeded") {
-    logger.warn("Agent loop exhausted max turns", { type, maxTurns });
+  if (collected.length > 0) {
+    logger.warn("Agent loop exhausted max turns", {
+      type,
+      maxTurns,
+      collectedCount: collected.length,
+      droppedWatched: droppedWatchedTotal,
+      droppedNoId: droppedNoIdTotal,
+      droppedMissingTitle: droppedMissingTitleTotal,
+      droppedCollected: droppedCollectedTotal,
+      droppedProposed: droppedProposedTotal,
+      droppedRated: droppedRatedTotal,
+    });
   }
-  const result = {
-    success: true,
-    recommendations: collected,
-    reason: loopTerminationReason,
-  };
-  logSummary(result.success, result.reason, result.recommendations);
-  return result;
+
+  return finalizeResult(
+    collected.length > 0,
+    collected,
+    "max_turns_exceeded"
+  );
 }
 
 module.exports = {

@@ -3,30 +3,9 @@ const { normalizeMediaKey } = require("./trakt");
 
 const toolDeclarations = [
   {
-    name: "search_tmdb",
-    description:
-      "Search TMDB for a movie or series by title and optional year. Returns top matches with tmdb_id, imdb_id, title, year, overview, and popularity.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        type: {
-          type: "STRING",
-          enum: ["movie", "series"],
-        },
-        query: {
-          type: "STRING",
-        },
-        year: {
-          type: "INTEGER",
-        },
-      },
-      required: ["type", "query"],
-    },
-  },
-  {
     name: "batch_search_tmdb",
     description:
-      "Search TMDB for multiple movies or series at once. Accepts an array of search queries and returns results for each. Use this instead of calling search_tmdb multiple times.",
+      "Search TMDB for multiple movies or series at once. This is the DEFAULT and REQUIRED method for searching TMDB when multiple titles are needed in a single turn. Accepts an array of up to 20 search queries and returns results for each. CRITICAL: When resolving multiple candidate titles, you MUST batch all searches into a single batch_search_tmdb call. NEVER fall back to search_tmdb for individual titles when multiple titles are needed—all titles for the current turn MUST be included in one batch_search_tmdb call. Maximum 20 queries per call.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -67,43 +46,6 @@ const toolDeclarations = [
           default: "both",
         },
       },
-    },
-  },
-  {
-    name: "check_if_watched",
-    description:
-      "Check whether items have already been watched or rated by the user. Returns per-item watched/rated status for batches of up to 20 items.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        items: {
-           type: "ARRAY",
-           maxItems: 20,
-           items: {
-            type: "OBJECT",
-            properties: {
-              type: {
-                type: "STRING",
-              },
-              tmdb_id: {
-                type: "INTEGER",
-              },
-              imdb_id: {
-                type: "STRING",
-              },
-              title: {
-                type: "STRING",
-                description: "The title of the movie or series to check",
-              },
-              year: {
-                type: "INTEGER",
-              },
-            },
-            required: ["type", "title"],
-          },
-        },
-      },
-      required: ["items"],
     },
   },
 ];
@@ -287,26 +229,6 @@ function getLogger(deps = {}) {
   return deps.logger || logger || console;
 }
 
-function buildMediaIdentityKeys(normalized) {
-  const keys = [];
-
-  if (normalized?.type && normalized.tmdb_id != null) {
-    keys.push(`tmdb:${normalized.type}:${normalized.tmdb_id}`);
-  }
-
-  if (normalized?.imdb_id) {
-    keys.push(`imdb:${normalized.imdb_id}`);
-  }
-
-  if (normalized?.title) {
-    keys.push(
-      `title:${normalized.type || ""}:${normalized.title.trim().toLowerCase()}:${normalized.year ?? ""}`
-    );
-  }
-
-  return [...new Set(keys)].filter(Boolean);
-}
-
 async function callSearchTMDB(searchTMDB, args) {
   if (typeof searchTMDB !== "function") {
     throw new Error("searchTMDB dependency is required");
@@ -341,25 +263,6 @@ function collectArrayLike(value) {
   }
 
   return [];
-}
-
-async function handleSearchTmdb(args, deps) {
-  const type = normalizeMediaType(args.type);
-  const results = await callSearchTMDB(deps.searchTMDB, {
-    query: normalizeString(args.query),
-    type,
-    year: normalizeOptionalYear(args.year),
-  });
-
-  const normalized = dedupeItems(
-    collectArrayLike(results)
-      .map((item) => normalizeSearchResult(item, type))
-      .filter(Boolean)
-  );
-
-  return {
-    results: normalized.map(({ type: _type, ...item }) => item),
-  };
 }
 
 async function handleBatchSearchTmdb(args, deps) {
@@ -434,32 +337,9 @@ async function handleGetUserFavorites(args, deps) {
   };
 }
 
-async function handleCheckIfWatched(args, deps) {
-   const items = Array.isArray(args.items) ? args.items.slice(0, 20) : [];
-  const watchedIdSet = deps.traktWatchedIdSet instanceof Set ? deps.traktWatchedIdSet : new Set();
-  const ratedIdSet = deps.traktRatedIdSet instanceof Set ? deps.traktRatedIdSet : new Set();
-
-  return {
-    items: items.map((item) => {
-      const normalized = normalizeMediaKey(item);
-      const keys = buildMediaIdentityKeys(normalized);
-      const watched = keys.some((key) => watchedIdSet.has(key));
-      const rated = keys.some((key) => ratedIdSet.has(key));
-
-      return {
-        title: item?.title || "Unknown",
-        watched,
-        rated,
-      };
-    }),
-  };
-}
-
 const handlers = {
-  search_tmdb: handleSearchTmdb,
   batch_search_tmdb: handleBatchSearchTmdb,
   get_user_favorites: handleGetUserFavorites,
-  check_if_watched: handleCheckIfWatched,
 };
 
 async function executeTools(toolCalls, deps = {}) {
@@ -486,7 +366,9 @@ async function executeTools(toolCalls, deps = {}) {
         args: call.args,
       });
 
+      const startedAt = Date.now();
       const response = await handler(call.args, deps);
+      const durationMs = Date.now() - startedAt;
 
       logger.agent("TOOL_EXEC_RESULT", {
         toolName: call.name,
@@ -495,7 +377,7 @@ async function executeTools(toolCalls, deps = {}) {
           : Array.isArray(response?.items)
             ? response.items.length
             : 0,
-        result: response,
+        durationMs,
       });
 
       results.push(toFunctionResponse({ id: call.id, name: call.name, response }));
