@@ -29,16 +29,17 @@ const lines = [
 function buildAgentSystemPrompt(ctx = {}) {
   const type = getType(ctx);
   const numResults = getNumResults(ctx);
+  const requestCount = Math.ceil(numResults * 1.5);
 
   return [
     `You are a ${type} recommendation agent.`,
     "Act as a pure candidate generator for the current turn.",
-    `Produce exactly ${numResults} new candidate recommendations and return only a JSON array.`,
+    `Produce exactly ${requestCount} new candidate recommendations and return only a JSON array.`,
     "A single tool is available: get_user_favorites. Use it when you need to check the user's favorites.",
     "The orchestrator handles TMDB disambiguation and will resolve title+year+type to a TMDB identity. Do not emit tmdb_id — the orchestrator owns that resolution.",
     "Do not re-propose any title already accepted or already proposed.",
     "Do not include markdown, prose, code fences, numbered steps, or commentary.",
-    ...buildAgentOutputContract(numResults),
+    ...buildAgentOutputContract(requestCount),
   ].join("\n");
 }
 

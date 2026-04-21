@@ -17,6 +17,7 @@ const { buildMediaIdentityKeys, setHasIdentity } = require("./mediaIdentity");
 
 const DEFAULT_MAX_TURNS = 6;
 const DEFAULT_MAX_TOOL_ROUNDS_PER_TURN = 8;
+const OVERFETCH_FACTOR = 1.5;
 
 const FUNCTION_CALLING_UNSUPPORTED_PATTERNS = [
   /function calling/i,
@@ -888,8 +889,8 @@ async function runAgentLoop(dependencies = {}) {
       acceptedSoFar,
       rejectedThisTurn: lastTurnRejectedTitles,
       proposedTitles,
-      gap: resolvedNumResults - collected.length,
-      remainingGap: resolvedNumResults - collected.length,
+gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
+      remainingGap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
       discoveredGenres: dependencies.discoveredGenres,
       genreAnalysis: dependencies.genreAnalysis,
       favoritesContext: dependencies.favoritesContext,
