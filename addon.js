@@ -1,5 +1,6 @@
 const { addonBuilder } = require("stremio-addon-sdk");
 const { GoogleGenAI } = require("@google/genai");
+const { createClient } = require("@libsql/client/web");
 const fetch = require("node-fetch").default;
 const logger = require("./utils/logger");
 const { decryptConfig } = require("./utils/crypto");
@@ -9,11 +10,20 @@ const { toolDeclarations, executeTools: executeAgentTools } = require("./utils/a
 const { fetchTraktFavorites, normalizeMediaKey } = require("./utils/trakt");
 const { buildMediaIdentityKeys, buildMediaIdentitySet } = require("./utils/mediaIdentity");
 const { buildSimilarContentPrompt, buildClassificationPrompt } = require("./utils/prompts");
-const { getStatValue, incrementStat, setStatValue } = require("./database");
+const {
+  getStatValue,
+  incrementStat,
+  setStatValue,
+  getAiCache,
+  setAiCache,
+  deleteAiCache,
+  purgeExpiredAiCache,
+  clearAiCache: clearAiCacheDb,
+} = require("./database");
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
 const TMDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB
 const TMDB_DISCOVER_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB discover (was 12 hours)
-const AI_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for AI
+const AUXILIARY_AI_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hour cache for non-recommendation AI helpers
 const RPDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for RPDB
 const DEFAULT_RPDB_KEY = process.env.RPDB_API_KEY;
 const DEFAULT_FANART_KEY = process.env.FANART_API_KEY;
@@ -30,6 +40,11 @@ const TRAKT_PAGINATION_CONCURRENCY = 4;
 
 // Stats counter for tracking total queries
 let queryCounter = 0;
+
+const tursoClient = createClient({
+  url: process.env.TURSO_URI,
+  authToken: process.env.TURSO_TOKEN,
+});
 
 async function hydrateQueryCounter() {
   try {
@@ -184,11 +199,6 @@ const tmdbDetailsCache = new SimpleLRUCache({
   ttl: TMDB_CACHE_DURATION,
 });
 
-const aiRecommendationsCache = new SimpleLRUCache({
-  max: 25000,
-  ttl: AI_CACHE_DURATION,
-});
-
 const rpdbCache = new SimpleLRUCache({
   max: 25000,
   ttl: RPDB_CACHE_DURATION,
@@ -201,7 +211,7 @@ const fanartCache = new SimpleLRUCache({
 
 const similarContentCache = new SimpleLRUCache({
   max: 5000,
-  ttl: AI_CACHE_DURATION,
+  ttl: AUXILIARY_AI_CACHE_DURATION,
 });
 
 const HOST = process.env.HOST
@@ -233,17 +243,6 @@ setInterval(() => {
     itemCount: tmdbDiscoverCache.size,
   };
 
-  const aiStats = {
-    size: aiRecommendationsCache.size,
-    maxSize: aiRecommendationsCache.max,
-    usagePercentage:
-      (
-        (aiRecommendationsCache.size / aiRecommendationsCache.max) *
-        100
-      ).toFixed(2) + "%",
-    itemCount: aiRecommendationsCache.size,
-  };
-
   const rpdbStats = {
     size: rpdbCache.size,
     maxSize: rpdbCache.max,
@@ -255,7 +254,7 @@ setInterval(() => {
     tmdbCache: tmdbStats,
     tmdbDetailsCache: tmdbDetailsStats,
     tmdbDiscoverCache: tmdbDiscoverStats,
-    aiCache: aiStats,
+    aiCache: { backend: "turso", inMemory: false },
     rpdbCache: rpdbStats,
   });
 }, 60 * 60 * 1000);
@@ -285,7 +284,7 @@ const tmdbDiscoverCache = new SimpleLRUCache({
 // Cache for query analysis results
 const queryAnalysisCache = new SimpleLRUCache({
   max: 1000,
-  ttl: AI_CACHE_DURATION, // Use the same TTL as other AI caches
+  ttl: AUXILIARY_AI_CACHE_DURATION,
 });
 
 /**
@@ -294,38 +293,27 @@ const queryAnalysisCache = new SimpleLRUCache({
  * @returns {object} An object containing the statistics of the purge operation.
  */
 function purgeEmptyAiCacheEntries() {
-  const cacheKeys = aiRecommendationsCache.keys();
-  let purgedCount = 0;
-  const totalScanned = cacheKeys.length;
-
-  logger.info("Starting purge of empty AI cache entries...", { totalEntries: totalScanned });
-
-  for (const key of cacheKeys) {
-    const cachedItem = aiRecommendationsCache.get(key);
-
-    // An item is considered "empty" if the data, recommendations, or both movies and series arrays are missing or empty.
-    const recommendations = cachedItem?.data?.recommendations;
-    const hasMovies = recommendations?.movies?.length > 0;
-    const hasSeries = recommendations?.series?.length > 0;
-
-    if (!hasMovies && !hasSeries) {
-      aiRecommendationsCache.delete(key);
-      purgedCount++;
-      logger.debug("Purged empty AI cache entry", { key });
-    }
-  }
-
-  const remaining = aiRecommendationsCache.size;
-  logger.info("Completed purge of empty AI cache entries.", {
-    scanned: totalScanned,
-    purged: purgedCount,
-    remaining: remaining,
-  });
+  logger.info("Starting AI cache expiration purge (Turso-backed)...");
+  purgeExpiredAiCache()
+    .then((purgedCount) => {
+      logger.info("Completed AI cache expiration purge.", {
+        backend: "turso",
+        purged: purgedCount,
+      });
+    })
+    .catch((error) => {
+      logger.error("Failed AI cache expiration purge.", {
+        backend: "turso",
+        error: error.message,
+      });
+    });
 
   return {
-    scanned: totalScanned,
-    purged: purgedCount,
-    remaining: remaining,
+    scanned: null,
+    purged: 0,
+    remaining: null,
+    pending: true,
+    backend: "turso",
   };
 }
 
@@ -2415,10 +2403,13 @@ function listTmdbDiscoverCacheKeys() {
 }
 
 function clearAiCache() {
-  const size = aiRecommendationsCache.size;
-  aiRecommendationsCache.clear();
-  logger.info("AI recommendations cache cleared", { previousSize: size });
-  return { cleared: true, previousSize: size };
+  clearAiCacheDb().catch((error) => {
+    logger.error("Failed to clear Turso AI recommendations cache", {
+      error: error.message,
+    });
+  });
+  logger.info("AI recommendations cache clear requested", { backend: "turso" });
+  return { cleared: true, previousSize: null, pending: true, backend: "turso" };
 }
 
 function removeAiCacheByKeywords(keywords) {
@@ -2428,41 +2419,52 @@ function removeAiCacheByKeywords(keywords) {
     }
 
     const searchPhrase = keywords.toLowerCase().trim();
-    const removedEntries = [];
-    let totalRemoved = 0;
+    const escapedPhrase = searchPhrase.replace(/[\\%_]/g, "\\$&");
+    const likePattern = `%${escapedPhrase}%`;
 
-    // Get all cache keys
-    const cacheKeys = aiRecommendationsCache.keys();
+    (async () => {
+      const matchedRows = await tursoClient.execute({
+        sql: `
+          SELECT cache_key, created_at
+          FROM ai_cache
+          WHERE LOWER(SUBSTR(cache_key, 1, INSTR(cache_key || '_', '_') - 1)) LIKE ? ESCAPE '\\'
+        `,
+        args: [likePattern],
+      });
 
-    // Iterate through all cache entries
-    for (const key of cacheKeys) {
-      // Extract the query part (everything before _movie_ or _series_)
-      const query = key.split("_")[0].toLowerCase();
+      const removedEntries = matchedRows.rows.map((row) => ({
+        key: row.cache_key,
+        timestamp: new Date(Number(row.created_at)).toISOString(),
+        query: String(row.cache_key).split("_")[0],
+      }));
 
-      // Only match if the search phrase is contained within the query
-      if (query.includes(searchPhrase)) {
-        const entry = aiRecommendationsCache.get(key);
-        if (entry) {
-          removedEntries.push({
-            key,
-            timestamp: new Date(entry.timestamp).toISOString(),
-            query: key.split("_")[0], // The query is the first part of the cache key
-          });
-          aiRecommendationsCache.delete(key);
-          totalRemoved++;
-        }
-      }
-    }
+      const deleteResult = await tursoClient.execute({
+        sql: `
+          DELETE FROM ai_cache
+          WHERE LOWER(SUBSTR(cache_key, 1, INSTR(cache_key || '_', '_') - 1)) LIKE ? ESCAPE '\\'
+        `,
+        args: [likePattern],
+      });
 
-    logger.info("AI recommendations cache entries removed by keywords", {
-      keywords: searchPhrase,
-      totalRemoved,
-      removedEntries,
+      logger.info("AI recommendations cache entries removed by keywords", {
+        backend: "turso",
+        keywords: searchPhrase,
+        totalRemoved: Number(deleteResult.rowsAffected ?? 0),
+        removedEntries,
+      });
+    })().catch((error) => {
+      logger.error("Error in removeAiCacheByKeywords async delete", {
+        error: error.message,
+        stack: error.stack,
+        keywords: searchPhrase,
+      });
     });
 
     return {
-      removed: totalRemoved,
-      entries: removedEntries,
+      removed: 0,
+      entries: [],
+      pending: true,
+      backend: "turso",
     };
   } catch (error) {
     logger.error("Error in removeAiCacheByKeywords:", {
@@ -2538,13 +2540,11 @@ function getCacheStats() {
         "%",
     },
     aiCache: {
-      size: aiRecommendationsCache.size,
-      maxSize: aiRecommendationsCache.max,
-      usagePercentage:
-        (
-          (aiRecommendationsCache.size / aiRecommendationsCache.max) *
-          100
-        ).toFixed(2) + "%",
+      backend: "turso",
+      inMemory: false,
+      size: null,
+      maxSize: null,
+      usagePercentage: null,
     },
     rpdbCache: {
       size: rpdbCache.size,
@@ -2593,7 +2593,6 @@ function serializeAllCaches() {
     tmdbCache: tmdbCache.serialize(),
     tmdbDetailsCache: tmdbDetailsCache.serialize(),
     tmdbDiscoverCache: tmdbDiscoverCache.serialize(),
-    aiRecommendationsCache: aiRecommendationsCache.serialize(),
     rpdbCache: rpdbCache.serialize(),
     fanartCache: fanartCache.serialize(),
     traktCache: traktCache.serialize(),
@@ -2623,16 +2622,6 @@ function deserializeAllCaches(data) {
   if (data.tmdbDiscoverCache) {
     results.tmdbDiscoverCache = tmdbDiscoverCache.deserialize(
       data.tmdbDiscoverCache
-    );
-  }
-
-  if (data.aiRecommendationsCache) {
-    results.aiRecommendationsCache = aiRecommendationsCache.deserialize(
-      data.aiRecommendationsCache
-    );
-  } else if (data.aiCache) {
-    results.aiRecommendationsCache = aiRecommendationsCache.deserialize(
-      data.aiCache
     );
   }
 
@@ -3470,18 +3459,13 @@ const catalogHandler = async function (args, req) {
       }
     }
 
-    const cacheKey = `${searchQuery}_${type}_${
-      traktData ? "trakt" : "no_trakt"
-    }`;
+    const traktIdentity = traktUsername ? `trakt_${traktUsername}` : "no_trakt";
+    const cacheKey = `${searchQuery}_${type}_${traktIdentity}`;
+    const tursoCache = enableAiCache ? await getAiCache(cacheKey) : null;
 
-    // Only check cache if there's no Trakt data or if it's not a recommendation query
-    if (
-      enableAiCache &&
-      !traktData &&
-      !isHomepageQuery &&
-      aiRecommendationsCache.has(cacheKey)
-    ) {
-      const cached = aiRecommendationsCache.get(cacheKey);
+    // Check cache for all queries (including Trakt users and homepage queries)
+    if (tursoCache) {
+      const cached = tursoCache;
 
       logger.info("AI recommendations cache hit", {
         cacheKey,
@@ -3502,7 +3486,7 @@ const catalogHandler = async function (args, req) {
           oldValue: cached.configNumResults,
           newValue: numResults,
         });
-        aiRecommendationsCache.delete(cacheKey);
+        await deleteAiCache(cacheKey);
       } else if (
         !cached.data?.recommendations ||
         (type === "movie" && !cached.data.recommendations.movies) ||
@@ -3512,7 +3496,7 @@ const catalogHandler = async function (args, req) {
           type,
           cachedData: cached.data,
         });
-        aiRecommendationsCache.delete(cacheKey);
+        await deleteAiCache(cacheKey);
       } else {
         // Convert cached recommendations to Stremio meta objects
         const selectedRecommendations =
@@ -3608,18 +3592,12 @@ const catalogHandler = async function (args, req) {
         query: searchQuery,
         type,
       });
-    } else if (traktData) {
-      logger.info("AI cache bypassed (using Trakt personalization)", {
-        cacheKey,
-        query: searchQuery,
-        type,
-        hasTraktData: true,
-      });
     } else {
       logger.info("AI recommendations cache miss", {
         cacheKey,
         query: searchQuery,
         type,
+        traktIdentity,
       });
     }
 
@@ -3650,7 +3628,6 @@ const catalogHandler = async function (args, req) {
       fetchTraktFavorites,
       tmdbCache,
       tmdbDetailsCache,
-      aiRecommendationsCache,
       traktCache,
       traktRawDataCache,
       favoritesCache: traktCache,
@@ -3956,13 +3933,9 @@ const catalogHandler = async function (args, req) {
       const hasMoviesToCache = recommendationsToCache.movies && recommendationsToCache.movies.length > 0;
       const hasSeriesToCache = recommendationsToCache.series && recommendationsToCache.series.length > 0;
 
-      // Only cache if there's no Trakt data (not user-specific) and it's not a homepage query
-      if ((hasMoviesToCache || hasSeriesToCache) && !traktData && !isHomepageQuery && enableAiCache) {
-        aiRecommendationsCache.set(cacheKey, {
-          timestamp: Date.now(),
-          data: finalResult,
-          configNumResults: numResults,
-        });
+      // Cache all results (including Trakt users and homepage queries)
+      if ((hasMoviesToCache || hasSeriesToCache) && enableAiCache) {
+        await setAiCache(cacheKey, finalResult, numResults);
 
         logger.debug("AI recommendations result cached", {
           cacheKey,
@@ -3976,10 +3949,6 @@ const catalogHandler = async function (args, req) {
         let reason = "";
         if (!(hasMoviesToCache || hasSeriesToCache)) {
           reason = "Result was empty";
-        } else if (isHomepageQuery) {
-          reason = "Dynamic homepage query";
-        } else if (traktData) {
-          reason = "User-specific Trakt data";
         } else if (!enableAiCache) {
           reason = "AI cache disabled in config";
         }
