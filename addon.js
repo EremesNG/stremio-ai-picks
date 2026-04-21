@@ -7,7 +7,8 @@ const { withRetry } = require("./utils/apiRetry");
 const { runAgentLoop } = require("./utils/agent");
 const { toolDeclarations, executeTools: executeAgentTools } = require("./utils/agent-tools");
 const { fetchTraktFavorites, normalizeMediaKey } = require("./utils/trakt");
-const { buildLinearPrompt, buildSimilarContentPrompt, buildClassificationPrompt } = require("./utils/prompts");
+const { buildMediaIdentityKeys, buildMediaIdentitySet } = require("./utils/mediaIdentity");
+const { buildSimilarContentPrompt, buildClassificationPrompt } = require("./utils/prompts");
 const { getStatValue, incrementStat, setStatValue } = require("./database");
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
 const TMDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB
@@ -2942,41 +2943,6 @@ function getRpdbTierFromApiKey(apiKey) {
   }
 }
 
-function buildMediaIdentityKeys(item) {
-  const normalized = normalizeMediaKey(item);
-  const keys = [];
-
-  if (normalized.type && normalized.tmdb_id != null) {
-    keys.push(`tmdb:${normalized.type}:${normalized.tmdb_id}`);
-  }
-
-  if (normalized.imdb_id) {
-    keys.push(`imdb:${normalized.imdb_id}`);
-  }
-
-  if (normalized.title) {
-    keys.push(
-      `title:${normalized.type || ""}:${normalized.title.trim().toLowerCase()}:${normalized.year ?? ""}`
-    );
-  }
-
-  return keys;
-}
-
-function addMediaIdentityKeys(targetSet, item) {
-  if (!(targetSet instanceof Set)) {
-    return;
-  }
-
-  buildMediaIdentityKeys(item).forEach((key) => targetSet.add(key));
-}
-
-function buildMediaIdentitySet(items = []) {
-  const identitySet = new Set();
-  (Array.isArray(items) ? items : []).forEach((item) => addMediaIdentityKeys(identitySet, item));
-  return identitySet;
-}
-
 function getTraktItemTimestamp(item, fallbackIndex = 0) {
   const candidates = [
     item?.listed_at,
@@ -3680,7 +3646,6 @@ const catalogHandler = async function (args, req) {
       },
       fetchTraktWatchedAndRated,
       traktWatchedFetcher: fetchTraktWatchedAndRated,
-      isItemWatchedOrRated,
       processPreferencesInParallel,
       fetchTraktFavorites,
       tmdbCache,
@@ -3697,61 +3662,74 @@ const catalogHandler = async function (args, req) {
     let agentRecommendations = null;
     let useAgentRecommendations = false;
     let agentFallbackReason = "";
+    let rawText = JSON.stringify({ recommendations: [] });
 
     if (isRecommendation) {
       const hasTraktAuth = !!(traktClientId && traktUsername && traktAccessToken);
+      const effectiveFilterWatched = hasTraktAuth ? filterWatched : false;
+      const shouldBuildTraktIdentitySets = hasTraktAuth && effectiveFilterWatched;
+      const traktWatchedItems = Array.isArray(traktData?.watched) ? traktData.watched : [];
+      const traktRatedItems = Array.isArray(traktData?.rated) ? traktData.rated : [];
+      const traktHistoryItems = Array.isArray(traktData?.history) ? traktData.history : [];
+      const traktWatchedIdSet = shouldBuildTraktIdentitySets
+        ? buildMediaIdentitySet(traktWatchedItems)
+        : new Set();
+      const traktRatedIdSet = shouldBuildTraktIdentitySets
+        ? buildMediaIdentitySet(traktRatedItems)
+        : new Set();
+      const traktHistoryIdSet = shouldBuildTraktIdentitySets
+        ? buildMediaIdentitySet(traktHistoryItems)
+        : new Set();
+      const doNotRecommend = shouldBuildTraktIdentitySets
+        ? buildDoNotRecommendList(traktWatchedItems, traktRatedItems)
+        : [];
 
-      if (hasTraktAuth) {
-        const traktWatchedItems = Array.isArray(traktData?.watched) ? traktData.watched : [];
-        const traktRatedItems = Array.isArray(traktData?.rated) ? traktData.rated : [];
-         const traktWatchedIdSet = buildMediaIdentitySet(traktWatchedItems);
-         const traktRatedIdSet = buildMediaIdentitySet(traktRatedItems);
-         const doNotRecommend = buildDoNotRecommendList(traktWatchedItems, traktRatedItems);
+      if (shouldBuildTraktIdentitySets) {
+        logger.agent('TRAKT_IDENTITY_SETS', {
+          traktWatchedIdSetSize: traktWatchedIdSet.size,
+          traktRatedIdSetSize: traktRatedIdSet.size,
+          traktHistoryIdSetSize: traktHistoryIdSet.size,
+          doNotRecommendCount: doNotRecommend.length,
+          doNotRecommendSample: doNotRecommend.slice(0, 5),
+          watchedIdSample: [...traktWatchedIdSet].slice(0, 5),
+        });
 
-         logger.agent('TRAKT_IDENTITY_SETS', {
-           traktWatchedIdSetSize: traktWatchedIdSet.size,
-           traktRatedIdSetSize: traktRatedIdSet.size,
-           doNotRecommendCount: doNotRecommend.length,
-           doNotRecommendSample: doNotRecommend.slice(0, 5),
-           watchedIdSample: [...traktWatchedIdSet].slice(0, 5),
-         });
+        logger.info("Trakt identity sets built for agent", {
+          watchedSize: traktWatchedIdSet.size,
+          ratedSize: traktRatedIdSet.size,
+          historySize: traktHistoryIdSet.size,
+          doNotRecommendCount: doNotRecommend.length,
+          traktUsername,
+        });
 
-         logger.info("Trakt identity sets built for agent", {
-           watchedSize: traktWatchedIdSet.size,
-           ratedSize: traktRatedIdSet.size,
-           doNotRecommendCount: doNotRecommend.length,
-           traktUsername,
-         });
-
-         if (hasTraktAuth && traktWatchedIdSet.size === 0 && traktRatedIdSet.size === 0) {
-           logger.agent('TRAKT_WARNING_EMPTY_SETS', {
-             message: 'Trakt auth is present but watched/rated sets are EMPTY. Agent will not filter any recommendations.',
-             traktUsername,
-             traktDataWasNull: traktData === null || traktData === undefined,
-             traktDataWatched: traktData?.watched?.length ?? 'undefined',
-             traktDataRated: traktData?.rated?.length ?? 'undefined',
-           });
-         }
-
-          const baseFilterCandidates = createFilterCandidates({
-           traktWatchedIdSet,
-           traktRatedIdSet,
-         });
-          const filterCandidates = filterWatched
-            ? baseFilterCandidates
-            : (rawItems = []) => {
-                const filtered = baseFilterCandidates(rawItems);
-                return {
-                  ...filtered,
-                  unwatched: [
-                    ...(Array.isArray(filtered.unwatched) ? filtered.unwatched : []),
-                    ...(Array.isArray(filtered.droppedWatched)
-                      ? filtered.droppedWatched
-                      : []),
-                  ],
-                  droppedWatched: [],
-                };
-              };
+        if (traktWatchedIdSet.size === 0 && traktRatedIdSet.size === 0 && traktHistoryIdSet.size === 0) {
+          logger.agent('TRAKT_WARNING_EMPTY_SETS', {
+            message: 'Trakt auth is present but watched/rated/history sets are EMPTY. Agent will not filter any recommendations.',
+            traktUsername,
+            traktDataWasNull: traktData === null || traktData === undefined,
+            traktDataWatched: traktData?.watched?.length ?? 'undefined',
+            traktDataRated: traktData?.rated?.length ?? 'undefined',
+            traktDataHistory: traktData?.history?.length ?? 'undefined',
+          });
+        }
+      } else if (hasTraktAuth) {
+        logger.info("Trakt filtering disabled for this request", {
+          query: searchQuery,
+          type,
+          filterWatched,
+          effectiveFilterWatched,
+          traktUsername,
+        });
+      } else {
+        logger.info("Running unified agent recommendation path without Trakt filters", {
+          query: searchQuery,
+          type,
+          reason: "Trakt auth not connected",
+          hasTraktClientId: !!traktClientId,
+          hasTraktUsername: !!traktUsername,
+          hasTraktAccessToken: !!traktAccessToken,
+        });
+      }
 
       logger.info("agent recommendation path starting", {
         query: searchQuery,
@@ -3768,105 +3746,108 @@ const catalogHandler = async function (args, req) {
         numResults,
         watchedSize: traktWatchedIdSet.size,
         ratedSize: traktRatedIdSet.size,
+        historySize: traktHistoryIdSet.size,
       });
 
       try {
-          const agentResult = await runAgentLoop({
-            ...agentDependencyBundle,
-            numResults,
-            filterWatched,
-            maxTurns,
-            traktWatchedIdSet,
-            traktRatedIdSet,
-            filterCandidates,
-            executeTools: (toolCalls, runtimeDeps = {}) =>
-              executeAgentTools(toolCalls, {
-                ...agentDependencyBundle,
-                ...runtimeDeps,
-                traktWatchedFetcher:
-                  runtimeDeps.traktWatchedFetcher || fetchTraktWatchedAndRated,
-                traktFavoritesFetcher:
-                  runtimeDeps.traktFavoritesFetcher || fetchTraktFavorites,
-                searchTMDB: runtimeDeps.searchTMDB || agentSearchTMDB,
-              }),
-          });
+        const agentResult = await runAgentLoop({
+          ...agentDependencyBundle,
+          numResults,
+          filterWatched: effectiveFilterWatched,
+          maxTurns,
+          traktWatchedIdSet,
+          traktRatedIdSet,
+          traktHistoryIdSet,
+          discoveredGenres,
+          genreAnalysis: extractGenreCriteria(searchQuery),
+          favoritesContext: filteredTraktData || traktData?.preferences || null,
+          executeTools: (toolCalls, runtimeDeps = {}) =>
+            executeAgentTools(toolCalls, {
+              ...agentDependencyBundle,
+              ...runtimeDeps,
+              traktWatchedFetcher:
+                runtimeDeps.traktWatchedFetcher || fetchTraktWatchedAndRated,
+              traktFavoritesFetcher:
+                runtimeDeps.traktFavoritesFetcher || fetchTraktFavorites,
+              searchTMDB: runtimeDeps.searchTMDB || agentSearchTMDB,
+            }),
+        });
 
-          const agentRecommendationsList = Array.isArray(agentResult?.recommendations)
-            ? agentResult.recommendations
-            : [];
-          const agentResultCount = agentRecommendationsList.length;
-          const agentReason = agentResult?.reason || "";
-          const agentSucceededWithResults =
-            !!agentResult?.success && agentResultCount > 0;
-          const agentSucceededPartially =
-            !!agentResult?.success &&
-            agentResultCount > 0 &&
-            (agentReason === "agent_stuck" || agentReason === "max_turns_exceeded");
+        const agentRecommendationsList = Array.isArray(agentResult?.recommendations)
+          ? agentResult.recommendations
+          : [];
+        const agentResultCount = agentRecommendationsList.length;
+        const agentReason = agentResult?.reason || "";
+        const agentSucceededWithResults =
+          !!agentResult?.success && agentResultCount > 0;
+        const agentSucceededPartially =
+          !!agentResult?.success &&
+          agentResultCount > 0 &&
+          (agentReason === "agent_stuck" || agentReason === "max_turns_exceeded");
 
-          logger.agent("AGENT_RESULT", {
+        logger.agent("AGENT_RESULT", {
+          query: searchQuery,
+          status: agentResult?.success ? "success" : "failure",
+          recommendationCount: agentResultCount,
+          terminationReason: agentReason || null,
+        });
+
+        if (agentSucceededWithResults || agentSucceededPartially) {
+          agentRecommendations = agentRecommendationsList;
+          useAgentRecommendations = true;
+          logger.info("Agent recommendation path selected", {
             query: searchQuery,
-            status: agentResult?.success ? "success" : "failure",
-            recommendationCount: agentResultCount,
-            terminationReason: agentReason || null,
+            type,
+            collectedCount: agentResultCount,
+            requestedCount: numResults,
+            reason: agentReason || undefined,
           });
-
-          if (agentSucceededWithResults || agentSucceededPartially) {
-            agentRecommendations = agentRecommendationsList;
-            useAgentRecommendations = true;
-            logger.info("Agent recommendation path selected", {
+          if (agentResultCount < numResults) {
+            logger.warn("Agent recommendation path returned fewer results than requested", {
               query: searchQuery,
               type,
               collectedCount: agentResultCount,
               requestedCount: numResults,
-              reason: agentReason || undefined,
-            });
-            if (agentResultCount < numResults) {
-              logger.warn("Agent recommendation path returned fewer results than requested", {
-                query: searchQuery,
-                type,
-                collectedCount: agentResultCount,
-                requestedCount: numResults,
-                reason: agentReason || "shorter_than_requested",
-              });
-            }
-          } else {
-            agentFallbackReason = agentResult?.reason || "agent_returned_failure";
-            logger.agent("AGENT_FALLBACK", {
-              query: searchQuery,
-              reason: agentFallbackReason,
-            });
-            logger.warn("agent recommendation path falling back", {
-              query: searchQuery,
-              type,
-              reason: agentFallbackReason,
+              reason: agentReason || "shorter_than_requested",
             });
           }
-        } catch (error) {
-          agentFallbackReason = error.message || "agent_threw";
+        } else {
+          agentFallbackReason = agentResult?.reason || "agent_returned_failure";
           logger.agent("AGENT_FALLBACK", {
             query: searchQuery,
             reason: agentFallbackReason,
           });
-          logger.warn("agent recommendation path falling back", {
+          logger.warn(
+            hasTraktAuth
+              ? "agent recommendation path falling back"
+              : "unified agent recommendation path returned no usable results",
+            {
+              query: searchQuery,
+              type,
+              reason: agentFallbackReason,
+            }
+          );
+        }
+      } catch (error) {
+        agentFallbackReason = error.message || "agent_threw";
+        logger.agent("AGENT_FALLBACK", {
+          query: searchQuery,
+          reason: agentFallbackReason,
+        });
+        logger.warn(
+          hasTraktAuth
+            ? "agent recommendation path falling back"
+            : "unified agent recommendation path failed",
+          {
             query: searchQuery,
             type,
             reason: agentFallbackReason,
             stack: error.stack,
-          });
-        }
-      } else {
-        logger.info("Skipping agent recommendation path", {
-          query: searchQuery,
-          type,
-          reason: "Trakt auth not connected",
-          hasTraktClientId: !!traktClientId,
-          hasTraktUsername: !!traktUsername,
-          hasTraktAccessToken: !!traktAccessToken,
-        });
+          }
+        );
       }
     }
     
-      let rawText;
       if (useAgentRecommendations) {
         rawText = JSON.stringify({ recommendations: agentRecommendations });
         logger.info("Using agent-produced recommendations for downstream enrichment", {
@@ -3875,132 +3856,11 @@ const catalogHandler = async function (args, req) {
           recommendationCount: agentRecommendations.length,
         });
       } else {
-        const ai = new GoogleGenAI({ apiKey: geminiKey });
-        const genreCriteria = extractGenreCriteria(searchQuery);
-        const promptText = buildLinearPrompt({
+        logger.warn("Unified recommendation path returned no recommendations", {
           query: searchQuery,
           type,
-          numResults,
-          discoveredGenres,
-          genreCriteria,
-          traktData,
-          tmdbInitialResults,
-          isRecommendation,
+          reason: agentFallbackReason || "agent_returned_no_results",
         });
-
-        logger.info("Making Gemini API call", {
-          model: geminiModel,
-          query: searchQuery,
-          type,
-          genreCriteria,
-          numResults,
-        });
-
-        logger.agent("LINEAR_PROMPT", {
-          query: searchQuery,
-          type,
-          numResults,
-          promptText,
-        });
-
-        try {
-          rawText = await withRetry(
-            async () => {
-              try {
-                const config = {
-                  responseMimeType: "application/json",
-                  responseJsonSchema: {
-                    type: "object",
-                    properties: {
-                      recommendations: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            type: { type: "string", enum: ["movie", "series"] },
-                            name: { type: "string" },
-                            year: { type: "integer" },
-                          },
-                          required: ["type", "name", "year"],
-                        },
-                      },
-                    },
-                    required: ["recommendations"],
-                  },
-                };
-
-                if (/2\.5|[3-9]\.\d/i.test(geminiModel)) {
-                  config.thinkingConfig = { thinkingBudget: 1024 };
-                }
-
-                const aiResult = await ai.models.generateContent({
-                  model: geminiModel,
-                  config,
-                  contents: promptText,
-                });
-
-                const responseText = aiResult.text.trim();
-                logger.agent("LINEAR_RESPONSE", {
-                  query: searchQuery,
-                  type,
-                  numResults,
-                  responseText,
-                  tokenUsage: aiResult.usageMetadata || {
-                    promptTokenCount: aiResult.promptFeedback?.tokenCount ?? null,
-                  },
-                });
-                logger.info("Gemini API response", {
-                  duration: `${Date.now() - startTime}ms`,
-                  promptTokens: aiResult.promptFeedback?.tokenCount,
-                  candidates: aiResult.candidates?.length,
-                  responseTextLength: responseText.length,
-                });
-
-                return aiResult.text;
-              } catch (error) {
-                logger.agent("LINEAR_ERROR", {
-                  query: searchQuery,
-                  type,
-                  numResults,
-                  error: {
-                    message: error.message,
-                    status: error.httpStatus || 500,
-                    stack: error.stack,
-                  },
-                });
-                logger.error("Gemini API call failed", {
-                  error: error.message,
-                  status: error.httpStatus || 500,
-                  stack: error.stack,
-                });
-                error.status = error.httpStatus || 500;
-                throw error;
-              }
-            },
-            {
-              maxRetries: 3,
-              initialDelay: 2000,
-              maxDelay: 10000,
-              shouldRetry: (error) => !error.status || error.status !== 400,
-              operationName: "Gemini API call",
-            }
-          );
-        } catch (error) {
-          logger.agent("LINEAR_ERROR", {
-            query: searchQuery,
-            type,
-            numResults,
-            error: {
-              message: error.message,
-              stack: error.stack,
-            },
-          });
-          logger.warn("Gemini linear recommendation call failed, returning empty catalog", {
-            error: error.message,
-            searchQuery,
-          });
-          rawText = JSON.stringify({ recommendations: [] });
-        }
       }
 
       // Process the response JSON
@@ -4091,112 +3951,6 @@ const catalogHandler = async function (args, req) {
         recommendations,
         fromCache: false,
       };
-
-      // Filter out watched items if we have Trakt data and this is a recommendation query
-      if (traktData && isRecommendation) {
-        const watchHistory = traktData.watched.concat(traktData.history || []);
-
-        // Log a summary of the user's watched and rated items for validation
-        const watchedSummary = watchHistory.slice(0, 20).map((item) => {
-          const media = item.movie || item.show;
-          return {
-            title: media.title,
-            year: media.year,
-            type: item.movie ? "movie" : "show",
-          };
-        });
-
-        const ratedSummary = traktData.rated.slice(0, 20).map((item) => {
-          const media = item.movie || item.show;
-          return {
-            title: media.title,
-            year: media.year,
-            rating: item.rating,
-            type: item.movie ? "movie" : "show",
-          };
-        });
-
-        logger.info("User's watch history and ratings (for validation)", {
-          totalWatched: watchHistory.length,
-          totalRated: traktData.rated.length,
-          watchedSample: watchedSummary,
-          ratedSample: ratedSummary,
-        });
-
-        // Filter out watched and rated items from recommendations
-        if (finalResult.recommendations.movies) {
-          // Get the list of movies before filtering
-          const allMovies = [...finalResult.recommendations.movies];
-
-          const unwatchedMovies = finalResult.recommendations.movies.filter(
-            (movie) =>
-              !isItemWatchedOrRated(movie, watchHistory, traktData.rated)
-          );
-
-          // Find which movies were filtered out
-          const filteredMovies = allMovies.filter(
-            (movie) =>
-              !unwatchedMovies.some(
-                (unwatched) =>
-                  unwatched.name === movie.name && unwatched.year === movie.year
-              )
-          );
-
-          logger.info(
-            "Filtered out watched and rated movies from recommendations",
-            {
-              totalRecommendations: finalResult.recommendations.movies.length,
-              unwatchedCount: unwatchedMovies.length,
-              filteredCount:
-                finalResult.recommendations.movies.length -
-                unwatchedMovies.length,
-              filteredMovies: filteredMovies.map((movie) => ({
-                title: movie.name,
-                year: movie.year,
-              })),
-            }
-          );
-
-          finalResult.recommendations.movies = unwatchedMovies;
-        }
-
-        if (finalResult.recommendations.series) {
-          // Get the list of series before filtering
-          const allSeries = [...finalResult.recommendations.series];
-
-          const unwatchedSeries = finalResult.recommendations.series.filter(
-            (series) =>
-              !isItemWatchedOrRated(series, watchHistory, traktData.rated)
-          );
-
-          // Find which series were filtered out
-          const filteredSeries = allSeries.filter(
-            (series) =>
-              !unwatchedSeries.some(
-                (unwatched) =>
-                  unwatched.name === series.name &&
-                  unwatched.year === series.year
-              )
-          );
-
-          logger.info(
-            "Filtered out watched and rated series from recommendations",
-            {
-              totalRecommendations: finalResult.recommendations.series.length,
-              unwatchedCount: unwatchedSeries.length,
-              filteredCount:
-                finalResult.recommendations.series.length -
-                unwatchedSeries.length,
-              filteredSeries: filteredSeries.map((series) => ({
-                title: series.name,
-                year: series.year,
-              })),
-            }
-          );
-
-          finalResult.recommendations.series = unwatchedSeries;
-        }
-      }
 
       const recommendationsToCache = finalResult.recommendations;
       const hasMoviesToCache = recommendationsToCache.movies && recommendationsToCache.movies.length > 0;

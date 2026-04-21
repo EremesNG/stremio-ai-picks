@@ -2,33 +2,40 @@
 
 ## Responsibility
 
-The utils directory provides core infrastructure for the Stremio AI Picks addon: agent orchestration (turn-based Gemini loop with tool dispatch), external API integration (Trakt.tv, TMDB), resilience patterns (exponential backoff retry), and centralized logging. These modules form the backbone of recommendation generation and data normalization.
+The utils directory provides core infrastructure for the Stremio AI Picks addon: agent orchestration (orchestrator-turn Gemini loop with bounded internal tool rounds), external API integration (Trakt.tv, TMDB), resilience patterns (exponential backoff retry), and centralized logging. These modules form the backbone of recommendation generation and data normalization.
 
 ## Modules
 
+### agent-validate.js
+**Role**: Owns the agent item schema contract and provides structured validation with corrective feedback.
+
+**Exports**: `AGENT_ITEM_SCHEMA`, `formatSchemaForPrompt`, `validateAgentItems`, `buildCorrectiveFeedback`
+
+**Patterns**: Single source of truth for schema; structured violation reporting
+
+**Flow**: `AGENT_ITEM_SCHEMA` declares the four-field contract (`type`, `title`, `year`, `tmdb_id`) once and is used by both prompt helpers and the validator to stay in sync. `validateAgentItems(items, { gap, schema })` checks required fields, field types, allowed fields, and per-turn item count against the current gap, returning `{ valid, validItems, invalidItems, violations }`. `buildCorrectiveFeedback` builds the structured retry message from a violation list. `formatSchemaForPrompt` renders the schema as a field list for prompt injection.
+
+**Integration**: Consumed by `agent.js` and `prompts.js`. Leaf module — does not import any other project module.
+
 ### agent.js
-**Role**: Orchestrates the Gemini agent loop — manages turn-based execution, tool dispatch, recommendation collection, and partial-results fallback.
+**Role**: Orchestrates the Gemini agent loop — manages orchestrator-turn execution, internal tool-round dispatch, recommendation collection, contract validation, single corrective retry, TMDB resolution ownership (orchestrator-owned batch resolution via `handleBatchSearchTmdb`), deterministic disambiguation, typeMismatch cross-type diagnostic, notFound handling, and partial-results fallback.
 
 **Exports**: `runAgentLoop`, `DEFAULT_MAX_TURNS`
 
 **Patterns**: Turn-based agent loop, Strategy pattern (normalization/filtering), Decorator-like retry wrapper
 
-**Flow**: Accepts a `deps` object containing caches, auth tokens, Trakt sets, and config fields. Executes up to `maxTurns` Gemini turns, dispatching function calls to `agent-tools.js`, collecting JSON recommendations, and returning a normalized array. Tracks proposed titles across turns via `proposedTitles` Set to prevent re-proposals. Injects progress feedback as text parts alongside tool-response parts (zero extra turn cost). Forces JSON output on final turn via finalization guard. Falls back to partial results on mid-loop Gemini failure (`api_error_partial`).
+**Flow**: Accepts a `deps` object containing caches, auth tokens, Trakt sets, and config fields. Executes up to `maxTurns` orchestrator turns, and within each turn runs an internal Gemini tool-round loop capped by a module-local safety guardrail (default 8). It dispatches only `get_user_favorites` via `agent-tools.js`; TMDB resolution is orchestrator-owned and called directly on validated candidates. Tracks proposed titles across turns via `proposedTitles` Set to prevent re-proposals. On parse/schema-valid items, calls `handleBatchSearchTmdb` directly for deterministic title+year+type matching, with cross-type fallback for `typeMismatch` diagnosis and `notFound` tracking. Emits `ORCHESTRATOR_TMDB_RESOLVE_RESULT` per query for telemetry. Injects progress feedback as text parts alongside tool-response parts (zero extra turn cost). Forces JSON output on the final turn via finalization guard. Falls back to partial results on mid-loop Gemini failure (`api_error_partial`) and surfaces `tool_loop_exhausted` when the final turn exhausts the internal tool-round cap. Imports `validateAgentItems` and `buildCorrectiveFeedback` from `utils/agent-validate.js`. On parse error or schema violation, issues exactly one corrective follow-up in the same chat session (guarded by `contractRetryUsed`), then accepts the valid subset. `applyTurnFilter` is narrowed to local dedupe (`duplicateCollected`, `duplicateProposed`) and Trakt filtering (`watched`, `rated`, `history`) only — `missingTmdb`/`missingTitle` branches are handled by the validator and remain as deprecated zero-valued keys in `TURN_RESULT.rejectedBreakdown` for backward compatibility. `TURN_RESULT` logs include `contractRetryUsed`, `violationsBeforeRetry`, `violationsAfterRetry`, and new rejection categories `typeMismatch` and `notFound`.
 
-**Integration**: Depends on `prompts.js` (prompt building), `agent-tools.js` (tool execution), `trakt.js` (watched/rated data), `apiRetry.js` (Gemini call resilience), `logger.js` (structured logging). Consumed by `addon.js`.
+**Integration**: Depends on `prompts.js` (prompt building), `agent-tools.js` (tool execution, `handleBatchSearchTmdb` helper), `agent-validate.js` (schema validation), `trakt.js` (watched/rated data), `apiRetry.js` (Gemini call resilience), `logger.js` (structured logging). Consumed by `addon.js`.
 
 ### agent-tools.js
-**Role**: Defines Gemini function-calling tool declarations and their handler implementations.
+**Role**: Declares Gemini model-visible tool surface and implements handler dispatch. Model-visible tools expose only `get_user_favorites`. `handleBatchSearchTmdb` is exported as an internal helper for orchestrator-owned TMDB resolution (not a model-visible tool).
 
-**Exports**: `toolDeclarations`, `executeTools`
+**Exports**: `toolDeclarations`, `executeTools`, `handleBatchSearchTmdb`
 
 **Patterns**: Command pattern (per-tool handlers), Registry pattern (handlers map)
 
-**Flow**: Receives `functionCalls` array from Gemini response, dispatches each call to its matching handler, returns results array. Handlers:
-- `search_tmdb` — single TMDB title search
-- `batch_search_tmdb` — parallel search for up to 20 queries via `Promise.allSettled`; per-query failure isolation
-- `check_if_watched` — checks Trakt watch/rated history; `maxItems=20`; requires `title`, `type`, `year`
-- `get_user_favorites` — fetches Trakt favorites list
+**Flow**: `toolDeclarations` exposes only `get_user_favorites` to Gemini; `batch_search_tmdb` is removed from the model-visible surface. `executeTools` receives `functionCalls` array from Gemini response, dispatches each call to its matching handler, returns results array. The `get_user_favorites` handler fetches Trakt favorites list. `handleBatchSearchTmdb` is exported for direct orchestrator invocation (via `agent.js`) and is not part of `toolDeclarations`; it performs parallel TMDB search for up to 20 queries via `Promise.allSettled` with per-query failure isolation.
 
 **Integration**: Depends on `trakt.js` (watched/rated checks, favorites), `logger.js` (tool execution logging). Consumed by `agent.js`.
 
@@ -39,7 +46,7 @@ The utils directory provides core infrastructure for the Stremio AI Picks addon:
 
 **Patterns**: Builder pattern
 
-**Flow**: Receives context objects (`ctx`), returns formatted strings consumed by `agent.js`. `buildAgentSystemPrompt` conditionally includes `check_if_watched` guidance based on `ctx.filterWatched`. `buildProgressFeedback` generates mid-loop context (accepted count, proposed titles, remaining slots). Implements turn-efficiency protocol: instructs Gemini to batch all searches in one turn, then batch all watched checks, then return JSON.
+**Flow**: Receives context objects (`ctx`), returns formatted strings consumed by `agent.js`. `buildAgentSystemPrompt` keeps the current tool surface aligned with `get_user_favorites` only (TMDB resolution is orchestrator-owned, not model-visible) while still conditioning behavior on `ctx.filterWatched`. `buildProgressFeedback` generates mid-loop context (accepted count, proposed titles, remaining slots). Implements turn-efficiency protocol: instructs Gemini to batch lookups inside the current orchestrator turn, then return JSON.
 
 **Integration**: Consumed by `agent.js`. No external dependencies.
 
@@ -80,20 +87,21 @@ The utils directory provides core infrastructure for the Stremio AI Picks addon:
 
 1. **Initialization**: `addon.js` calls `agent.js:runAgentLoop` with a `deps` object containing Trakt tokens, caches, and config.
 2. **Prompt Building**: `agent.js` calls `prompts.js` to build system prompt and initial message.
-3. **Agent Loop**: `agent.js` sends prompts to Gemini API (wrapped in `apiRetry.js` for resilience).
-4. **Tool Dispatch**: Gemini returns function calls; `agent.js` dispatches to `agent-tools.js:executeTools`.
-5. **Tool Execution**: `agent-tools.js` handlers call `trakt.js` for watched/rated checks and favorites, or external TMDB API (via `apiRetry.js`).
-6. **Feedback Injection**: `agent.js` calls `prompts.js:buildProgressFeedback` to inject mid-loop context.
-7. **Finalization**: After `maxTurns` or early termination, `agent.js` returns normalized recommendations to `addon.js`.
+3. **Agent Loop**: `agent.js` sends prompts to Gemini API (wrapped in `apiRetry.js` for resilience) and counts outer orchestrator turns separately from internal tool rounds.
+4. **Tool Dispatch**: Gemini returns function calls; `agent.js` dispatches favorites calls to `agent-tools.js:executeTools`. TMDB resolution is not dispatched as a tool; `agent.js` calls `handleBatchSearchTmdb` directly after schema validation.
+5. **Tool Execution**: `agent-tools.js:executeTools` handles `get_user_favorites` via Trakt API. TMDB resolution runs directly in `agent.js` via `handleBatchSearchTmdb` (not model-visible).
+6. **Feedback Injection**: `agent.js` calls `prompts.js:buildProgressFeedback` to inject mid-round context.
+7. **Finalization**: After `maxTurns` orchestrator turns or early termination, `agent.js` returns normalized recommendations to `addon.js`.
 8. **Logging**: All modules log via `logger.js` singleton.
 
 ## Integration Map
 
 **Depends On**:
-- `agent.js` ← `prompts.js`, `agent-tools.js`, `trakt.js`, `apiRetry.js`, `logger.js`
+- `agent.js` ← `prompts.js`, `agent-tools.js`, `agent-validate.js`, `trakt.js`, `apiRetry.js`, `logger.js`
 - `agent-tools.js` ← `trakt.js`, `logger.js`
+- `agent-validate.js` ← (no dependencies)
 - `trakt.js` ← `apiRetry.js`, `logger.js`
-- `prompts.js` ← (no dependencies)
+- `prompts.js` ← `agent-validate.js`
 - `apiRetry.js` ← (no dependencies)
 - `logger.js` ← (no dependencies)
 

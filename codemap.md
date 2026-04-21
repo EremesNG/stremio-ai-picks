@@ -18,7 +18,7 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 3. Request routed through Express middleware (logging, platform detection, rate limiting)
 4. `addon.js` handlers (`catalogHandler`, `metaHandler`, `streamHandler`) process the request
 5. Handlers invoke `runAgentLoop` (from `utils/agent.js`) with Gemini AI for intelligent query interpretation
-6. Agent loop uses function-calling tools (`utils/agent-tools.js`): `search_tmdb`, `batch_search_tmdb`, `check_if_watched`, `get_user_favorites`
+6. Agent loop uses function-calling tools (`utils/agent-tools.js`): `get_user_favorites` is the sole model-visible tool; TMDB resolution is orchestrator-owned and happens after the model emits its candidate array
 7. Results cached in custom `SimpleLRUCache`, persisted to gzip files in `cache_data/` every hour and on graceful shutdown
 8. Response returned as Stremio-compatible JSON
 
@@ -29,13 +29,17 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 - Cache data serialized to `cache_data/` directory (gzip format)
 
 ### Agent Loop Design
-- Turn-based Gemini agent with function-calling tools
-- Supports `FilterWatched` (conditional on Trakt auth) and `MaxTurns` (4–12 range) configuration
+- Orchestrator-turn Gemini agent with internal tool rounds inside each turn
+- Supports `FilterWatched` (conditional on Trakt auth) and `MaxTurns` (4–12 range, default 6) configuration; `MaxTurns` counts orchestrator attempts, not Gemini tool rounds
+- Internal tool rounds are bounded by a module-local safety cap in `utils/agent.js` (default 8) and are not user-configurable
 - Tracks `proposedTitles` across turns to avoid duplicates
-- Batching protocol for efficiency: `batch_search_tmdb` supports up to 20 parallel TMDB queries
-- Watched-item checking: `check_if_watched` maxItems=20 per call
-- Finalization guard prevents incomplete responses; partial fallback on agent timeout
-- Progress feedback sent to user during multi-turn reasoning
+- Batching protocol for efficiency: TMDB resolution runs as a single orchestrator-owned batch per turn (up to 20 parallel queries via `handleBatchSearchTmdb`), while `get_user_favorites` can add Trakt context during the turn
+- Finalization guard prevents incomplete responses; `tool_loop_exhausted` marks final-turn safety-cap exhaustion and partial fallback still covers agent timeout
+- Progress feedback sent to user during multi-turn orchestrator reasoning
+- Agent item schema (`{ type, title, year }`) declared once in `utils/agent-validate.js` as `AGENT_ITEM_SCHEMA` and used as the shared source of truth by both the prompt helpers and the validator; `tmdb_id` is NOT emitted by the model — it is added by the orchestrator after TMDB resolution
+- `validateAgentItems` in `utils/agent-validate.js` enforces the contract: required fields, field types, allowed fields, and per-turn item count against the current gap
+- Single corrective retry per turn: parse errors or schema violations trigger one corrective follow-up in the same chat session via `buildCorrectiveFeedback`; a `contractRetryUsed` flag prevents a second retry within the same turn
+- `TURN_RESULT` logging extended with `contractRetryUsed`, `violationsBeforeRetry`, and `violationsAfterRetry` for structured telemetry
 
 ### Caching Strategy
 - Custom `SimpleLRUCache` in `addon.js` minimizes redundant API calls
@@ -71,12 +75,14 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 - Avoids storing secrets server-side; decryption happens per-request
 - Tradeoff: URL length constraints; mitigation via `utils/crypto.js` compression
 
-### 2. Turn-Based Gemini Agent with Function-Calling Tools
+### 2. Orchestrator-Turn Gemini Agent with Function-Calling Tools
 - Agent loop (`utils/agent.js`) uses Gemini's native function-calling API
-- Tools declared in `utils/agent-tools.js`: `search_tmdb`, `batch_search_tmdb`, `check_if_watched`, `get_user_favorites`
+- Orchestrator turns are the outer budget; internal tool rounds happen inside each turn
+- Tools declared in `utils/agent-tools.js`: only `get_user_favorites` is model-visible; `handleBatchSearchTmdb` remains callable by the orchestrator for post-emission TMDB resolution
 - Batching protocol (up to 20 parallel TMDB queries) reduces API calls and latency
+- Internal tool rounds are guarded by a module-local safety cap in `utils/agent.js` (default 8); `MaxTurns` remains the 4–12 range with default 6
 - Finalization guard + partial fallback ensures graceful degradation on timeout
-- Tradeoff: Multi-turn reasoning increases latency; mitigated by turn limits (MaxTurns 4–12)
+- Tradeoff: Multi-turn reasoning increases latency; mitigated by turn limits (MaxTurns 4–12) and the internal tool-round cap
 
 ### 3. Custom SimpleLRUCache with Persistent Gzip Serialization
 - In-memory LRU cache for catalog/meta/stream results
@@ -97,7 +103,7 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 
 ### 6. FilterWatched & MaxTurns Configuration Fields
 - `FilterWatched`: Conditional on Trakt authentication; filters results to unwatched items only
-- `MaxTurns`: Limits agent reasoning turns (4–12 range) to control latency
+- `MaxTurns`: Limits orchestrator turns (4–12 range, default 6) to control latency; inner tool rounds are handled automatically by `utils/agent.js`
 - Both fields parsed in `addon.js` and passed to `runAgentLoop`
 - Tradeoff: Additional config complexity; benefit: user control over behavior and performance
 
