@@ -130,7 +130,7 @@ This change MODIFIES baseline turn/loop telemetry. `TURN_RESULT.rejectedBreakdow
 - AND `NUDGE_DISPATCHED` reasons `repeated_batch` and `cap_reached` are absent
 
 ### Requirement: Emit orchestrator TMDB resolution telemetry per batch
-The orchestrator MUST emit `ORCHESTRATOR_TMDB_RESOLVE_RESULT` for each orchestrator-owned TMDB resolution batch. This event replaces TMDB-resolution observability previously inferred from `TOOL_EXEC_RESULT` when TMDB search was model-invoked (`utils/agent-tools.js:268-315`, `363-381`).
+For each orchestrator-owned TMDB resolution batch, the orchestrator MUST emit `ORCHESTRATOR_TMDB_RESOLVE_RESULT` once per input query. This event replaces TMDB-resolution observability previously inferred from `TOOL_EXEC_RESULT` when TMDB search was model-invoked (`utils/agent-tools.js:268-315`, `363-381`).
 
 The event payload MUST include per-query outcomes with:
 - `title`
@@ -138,14 +138,14 @@ The event payload MUST include per-query outcomes with:
 - `requestedType`
 - `matchedTmdbId`
 - `matchedType`
-- `resolution` (`matched` | `notFound` | `typeMismatch`)
+- `resolution` (`exact` | `title+type` | `type-only` | `typeMismatch` | `none`)
 - `durationMs`
 
 #### Scenario: Every collected tmdb_id is traceable to same-request resolution event
 - GIVEN a request returns collected recommendations
 - WHEN `TURN_RESULT` and `ORCHESTRATOR_TMDB_RESOLVE_RESULT` events are correlated for that same request
-- THEN every collected `tmdb_id` can be traced to a query entry with `resolution=matched` and the same `matchedTmdbId`
-- AND unresolved or type-mismatched candidates are traceable via `resolution=notFound|typeMismatch`
+- THEN every collected `tmdb_id` can be traced to a query entry with `resolution=exact|title+type|type-only` and the same `matchedTmdbId`
+- AND unresolved or type-mismatched candidates are traceable via `resolution=none|typeMismatch`
 
 ### Requirement: Preserve existing post-resolution filtering ownership
 `applyTurnFilter` Trakt identity filtering and cross-turn deduplication ownership remain unchanged in responsibility (baseline behavior at `utils/agent.js:1346-1354` and `utils/agent.js:409-523`), but now apply only to orchestrator-resolved candidates.
@@ -195,6 +195,7 @@ This change supersedes baseline telemetry assumptions for turn-loop diagnostics.
 - Event `TOOL_LOOP_DETECTED` REMOVED.
 - Event `NUDGE_DISPATCHED` MODIFIED to disallow reasons `repeated_batch` and `cap_reached`.
 - `LOOP_END` MUST continue to report `totalTurns`, `terminationReason`, and `collectedCount` (baseline `utils/agent.js:782-807`) with no TMDB-loop-specific reason dependency.
+- Final `LOOP_END` payload MUST contain exactly: `totalTurns`, `terminationReason`, `collectedCount`, `droppedWatched`, `droppedNoId`, `droppedMissingTitle`, `droppedCollected`, `droppedProposed`, `droppedRated`, `elapsed` (and MUST NOT include `droppedDuplicates` or `durationMs`).
 
 #### Scenario: Telemetry contract validation across one full run
 - GIVEN a request that executes at least two turns

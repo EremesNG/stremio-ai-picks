@@ -3,37 +3,6 @@ const { normalizeMediaKey } = require("./trakt");
 
 const toolDeclarations = [
   {
-    name: "batch_search_tmdb",
-    description:
-      "Search TMDB for multiple movies or series at once. This is the DEFAULT and REQUIRED method for searching TMDB when multiple titles are needed in a single turn. Accepts an array of up to 20 search queries and returns results for each. CRITICAL: When resolving multiple candidate titles, you MUST batch all searches into a single batch_search_tmdb call. NEVER fall back to search_tmdb for individual titles when multiple titles are needed—all titles for the current turn MUST be included in one batch_search_tmdb call. Maximum 20 queries per call.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        queries: {
-          type: "ARRAY",
-          maxItems: 20,
-          items: {
-            type: "OBJECT",
-            properties: {
-              type: {
-                type: "STRING",
-                enum: ["movie", "series"],
-              },
-              query: {
-                type: "STRING",
-              },
-              year: {
-                type: "INTEGER",
-              },
-            },
-            required: ["type", "query"],
-          },
-        },
-      },
-      required: ["queries"],
-    },
-  },
-  {
     name: "get_user_favorites",
     description:
       "Fetch the user's Trakt favorites (curated list of strongest preferences). Returns normalized items with tmdb/imdb/trakt ids, title, year, type, and rank.",
@@ -408,4 +377,5 @@ async function executeTools(toolCalls, deps = {}) {
 module.exports = {
   toolDeclarations,
   executeTools,
+  handleBatchSearchTmdb,
 };

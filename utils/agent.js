@@ -7,6 +7,7 @@ const {
   validateAgentItems,
   buildCorrectiveFeedback,
 } = require("./agent-validate");
+const { handleBatchSearchTmdb } = require("./agent-tools");
 const {
   buildAgentSystemPrompt,
   buildTurnMessage,
@@ -246,61 +247,6 @@ function collectProposedTitlesFromFunctionCalls(functionCalls) {
   return titles;
 }
 
-function normalizeBatchSearchQueryForSignature(query) {
-  const source = query && typeof query === "object" ? query : {};
-  const normalizedYear = parseStrictInteger(source.year);
-
-  return {
-    query:
-      typeof source.query === "string"
-        ? source.query.trim().toLowerCase()
-        : source.query == null
-          ? ""
-          : String(source.query).trim().toLowerCase(),
-    type:
-      typeof source.type === "string"
-        ? source.type.trim().toLowerCase()
-        : source.type == null
-          ? ""
-          : String(source.type).trim().toLowerCase(),
-    year:
-      normalizedYear !== null
-        ? normalizedYear
-        : source.year == null
-          ? null
-          : String(source.year).trim().toLowerCase(),
-  };
-}
-
-function computeToolBatchSignature(functionCalls) {
-  if (!Array.isArray(functionCalls) || functionCalls.length === 0) {
-    return "";
-  }
-
-  const callSignatures = functionCalls
-    .map((call) => {
-      if (call?.name === "batch_search_tmdb") {
-        const queries = Array.isArray(call?.args?.queries) ? call.args.queries : [];
-        const normalizedQueries = queries
-          .map((query) => normalizeBatchSearchQueryForSignature(query))
-          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-
-        return JSON.stringify({
-          toolName: call.name,
-          queries: normalizedQueries,
-        });
-      }
-
-      return JSON.stringify({
-        toolName: call?.name || "",
-        args: call?.args,
-      });
-    })
-    .sort();
-
-  return callSignatures.join("|");
-}
-
 function recordProposedTitlesFromRecommendations(recommendations, proposedTitles) {
   if (!Array.isArray(recommendations)) {
     return;
@@ -354,6 +300,71 @@ function getTurnItemType(item, fallbackType = "movie") {
 function getTurnItemYear(item) {
   const year = parseStrictInteger(item?.year);
   return year !== null && year > 0 ? year : null;
+}
+
+function formatTurnTitleWithYear(item) {
+  const title = getTurnTitle(item);
+  if (!title) {
+    return null;
+  }
+
+  const year = getTurnItemYear(item);
+  return year !== null ? `${title} (${year})` : title;
+}
+
+function normalizeTitle(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035`´']/g, "")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036"]/g, "")
+    .replace(/[.,:;!?\-_/]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTmdbMatchType(match, fallbackType) {
+  return (
+    normalizeRecommendationType(match?.type) ||
+    normalizeRecommendationType(match?.media_type) ||
+    normalizeRecommendationType(fallbackType) ||
+    null
+  );
+}
+
+function extractTmdbMatchYear(match, matchedType) {
+  if (!match || typeof match !== "object") {
+    return null;
+  }
+
+  const directYear = parseStrictInteger(match?.year);
+  if (directYear !== null && directYear > 0) {
+    return directYear;
+  }
+
+  const releaseYear = parseStrictInteger(String(match?.release_date || "").slice(0, 4));
+  const firstAirYear = parseStrictInteger(String(match?.first_air_date || "").slice(0, 4));
+
+  if (matchedType === "movie") {
+    return releaseYear !== null && releaseYear > 0 ? releaseYear : null;
+  }
+
+  if (matchedType === "series") {
+    return firstAirYear !== null && firstAirYear > 0
+      ? firstAirYear
+      : releaseYear !== null && releaseYear > 0
+        ? releaseYear
+        : null;
+  }
+
+  return releaseYear !== null && releaseYear > 0
+    ? releaseYear
+    : firstAirYear !== null && firstAirYear > 0
+      ? firstAirYear
+      : null;
 }
 
 function getTurnPrimaryKey(item, fallbackType) {
@@ -434,12 +445,24 @@ function applyTurnFilter(items, ctx = {}) {
   let droppedProposedCount = 0;
   let droppedWatchedCount = 0;
   let droppedRatedCount = 0;
+  let droppedHistoryCount = 0;
+  let droppedTypeMismatchCount = 0;
+  let droppedNotFoundCount = 0;
   const seenThisTurnIdentitySet = new Set();
+  const rejectedTitles = {
+    watched: [],
+    rated: [],
+    history: [],
+    duplicate: [],
+    typeMismatch: [],
+    notFound: [],
+  };
 
   (Array.isArray(items) ? items : []).forEach((item) => {
     const proposalTokens = getTurnProposalTokens(item, requestedType);
     const currentTitle = getTurnTitle(item);
     const currentYear = getTurnItemYear(item);
+    const resolution = typeof item?.resolution === "string" ? item.resolution : "none";
     const tmdb_id = parseStrictInteger(item?.tmdb_id ?? item?.tmdbId ?? item?.ids?.tmdb ?? null);
     const type = getTurnItemType(item, requestedType);
     const primaryKey = tmdb_id !== null && tmdb_id > 0 ? `${type}:${tmdb_id}` : null;
@@ -461,6 +484,15 @@ function applyTurnFilter(items, ctx = {}) {
     const isDuplicateProposed = proposedIdentityTokens.some(
       (token) => proposedIdentitySet.has(token) || seenThisTurnIdentitySet.has(token)
     );
+    const rejectionLabel =
+      formatTurnTitleWithYear({ title: currentTitle, year: currentYear }) || currentTitle || null;
+
+    function recordRejection(bucketName) {
+      if (!rejectionLabel || !Array.isArray(rejectedTitles[bucketName])) {
+        return;
+      }
+      rejectedTitles[bucketName].push(rejectionLabel);
+    }
 
     addProposedTokens(proposedTitles, proposalTokens);
     proposedIdentityTokens.forEach((token) => {
@@ -471,30 +503,49 @@ function applyTurnFilter(items, ctx = {}) {
     if (primaryKey && collectedIdentitySet.has(primaryKey)) {
       rejectedCount += 1;
       droppedCollectedCount += 1;
+      recordRejection("duplicate");
       return;
     }
 
     if (isDuplicateProposed) {
       rejectedCount += 1;
       droppedProposedCount += 1;
+      recordRejection("duplicate");
+      return;
+    }
+
+    if (resolution === "typeMismatch") {
+      rejectedCount += 1;
+      droppedTypeMismatchCount += 1;
+      recordRejection("typeMismatch");
+      return;
+    }
+
+    if (resolution === "none") {
+      rejectedCount += 1;
+      droppedNotFoundCount += 1;
+      recordRejection("notFound");
       return;
     }
 
     if (watchedIdentitySet && setHasIdentity(watchedIdentitySet, ...itemKeys)) {
       rejectedCount += 1;
       droppedWatchedCount += 1;
+      recordRejection("watched");
       return;
     }
 
     if (historyIdentitySet && setHasIdentity(historyIdentitySet, ...itemKeys)) {
       rejectedCount += 1;
-      droppedWatchedCount += 1;
+      droppedHistoryCount += 1;
+      recordRejection("history");
       return;
     }
 
     if (ratedIdentitySet && setHasIdentity(ratedIdentitySet, ...itemKeys)) {
       rejectedCount += 1;
       droppedRatedCount += 1;
+      recordRejection("rated");
       return;
     }
 
@@ -518,6 +569,10 @@ function applyTurnFilter(items, ctx = {}) {
     droppedProposedCount,
     droppedWatchedCount,
     droppedRatedCount,
+    droppedHistoryCount,
+    droppedTypeMismatchCount,
+    droppedNotFoundCount,
+    rejectedTitles,
     rejectedCount,
   };
 }
@@ -744,6 +799,15 @@ async function runAgentLoop(dependencies = {}) {
   let toolCalls = 0;
   let collected = [];
   let proposedTitles = [];
+  let acceptedSoFar = [];
+  let lastTurnRejectedTitles = {
+    watched: [],
+    rated: [],
+    history: [],
+    duplicate: [],
+    typeMismatch: [],
+    notFound: [],
+  };
   let droppedWatchedTotal = 0;
   let droppedNoIdTotal = 0;
   let droppedMissingTitleTotal = 0;
@@ -821,8 +885,11 @@ async function runAgentLoop(dependencies = {}) {
       query: userQuery,
       numResults: resolvedNumResults,
       collected,
+      acceptedSoFar,
+      rejectedThisTurn: lastTurnRejectedTitles,
       proposedTitles,
       gap: resolvedNumResults - collected.length,
+      remainingGap: resolvedNumResults - collected.length,
       discoveredGenres: dependencies.discoveredGenres,
       genreAnalysis: dependencies.genreAnalysis,
       favoritesContext: dependencies.favoritesContext,
@@ -929,8 +996,6 @@ async function runAgentLoop(dependencies = {}) {
     let contractRetryUsed = false;
     let emptyResponseNudgeUsed = false;
     let nudgeReason = null;
-    let toolLoopDetected = false;
-    let lastToolBatchSignature = null;
     let violationsBeforeRetry = [];
     let violationsAfterRetry = [];
 
@@ -953,36 +1018,206 @@ async function runAgentLoop(dependencies = {}) {
         contractRetryUsed,
         emptyResponseNudgeUsed,
         nudgeReason,
-        toolLoopDetected,
         violationsBeforeRetry,
         violationsAfterRetry,
       };
     }
 
-    function buildNudgeMessage(reason, gap) {
-      if (reason === "repeated_batch") {
-        return [
-          "You repeated the same tool batch as the previous round.",
-          "You already have enough information from previous tool calls.",
-          `Return now the JSON array with exactly ${gap} items conforming to the schema.`,
-          "Do not call more tools. Do not include prose or markdown. JSON array only.",
-        ].join(" ");
-      }
-
-      if (reason === "cap_reached") {
-        return [
-          "You have executed too many tool calls without producing a result.",
-          "You already have enough information from previous tool calls.",
-          `Return now the JSON array with exactly ${gap} items conforming to the schema.`,
-          "Do not call more tools. Do not include prose or markdown. JSON array only.",
-        ].join(" ");
-      }
-
+    function buildNudgeMessage(_reason, gap) {
       return [
         "The previous response was empty. You already received the tool results.",
         `Return now the JSON array with exactly ${gap} items conforming to the schema.`,
         "Do not call more tools. Do not include prose or markdown. JSON array only.",
       ].join(" ");
+    }
+
+    function selectTmdbMatchForCandidate(candidate, resolvedEntry) {
+      const requestedType = getTurnItemType(candidate, type);
+      const requestedTitle = normalizeTitle(getTurnTitle(candidate) || "");
+      const requestedYear = getTurnItemYear(candidate);
+      const matchList = Array.isArray(resolvedEntry?.matches) ? resolvedEntry.matches : [];
+
+      function selectByType(targetType, fallbackType) {
+        const tierA = matchList.find((match) => {
+          const matchedType = extractTmdbMatchType(match, fallbackType);
+          if (matchedType !== targetType) {
+            return false;
+          }
+
+          const matchedTitle = normalizeTitle(getTurnTitle(match) || "");
+          if (!matchedTitle || matchedTitle !== requestedTitle) {
+            return false;
+          }
+
+          const matchedYear = extractTmdbMatchYear(match, matchedType);
+          return requestedYear !== null && matchedYear === requestedYear;
+        });
+
+        if (tierA) {
+          return {
+            match: tierA,
+            matchedType: extractTmdbMatchType(tierA, fallbackType) || undefined,
+            matchedTmdbId: undefined,
+            resolution: "exact",
+          };
+        }
+
+        const tierB = matchList.find((match) => {
+          const matchedType = extractTmdbMatchType(match, fallbackType);
+          if (matchedType !== targetType) {
+            return false;
+          }
+
+          const matchedTitle = normalizeTitle(getTurnTitle(match) || "");
+          return !!matchedTitle && matchedTitle === requestedTitle;
+        });
+
+        if (tierB) {
+          return {
+            match: tierB,
+            matchedType: extractTmdbMatchType(tierB, fallbackType) || undefined,
+            matchedTmdbId: undefined,
+            resolution: "title+type",
+          };
+        }
+
+        const tierC = matchList.find((match) => {
+          const matchedType = extractTmdbMatchType(match, fallbackType);
+          return matchedType === targetType;
+        });
+
+        if (tierC) {
+          return {
+            match: tierC,
+            matchedType: extractTmdbMatchType(tierC, fallbackType) || undefined,
+            matchedTmdbId: undefined,
+            resolution: "type-only",
+          };
+        }
+
+        return {
+          match: null,
+          matchedType: undefined,
+          matchedTmdbId: undefined,
+          resolution: "none",
+        };
+      }
+
+      const primarySelection = selectByType(requestedType, resolvedEntry?.type || requestedType);
+      if (primarySelection.resolution !== "none") {
+        return primarySelection;
+      }
+
+      const oppositeType = requestedType === "movie"
+        ? "series"
+        : requestedType === "series"
+          ? "movie"
+          : null;
+
+      if (!oppositeType) {
+        return primarySelection;
+      }
+
+      // Cross-type diagnostic fallback runs once and only after primary resolution is "none".
+      const oppositeSelection = selectByType(oppositeType, undefined);
+      if (oppositeSelection.resolution !== "none") {
+        const matchedTmdbId = parseStrictInteger(
+          oppositeSelection.match?.tmdb_id ?? oppositeSelection.match?.id ?? null
+        );
+        if (matchedTmdbId === null || matchedTmdbId <= 0) {
+          return primarySelection;
+        }
+        return {
+          match: null,
+          matchedType: oppositeSelection.matchedType || oppositeType,
+          matchedTmdbId,
+          resolution: "typeMismatch",
+        };
+      }
+
+      return primarySelection;
+    }
+
+    async function resolveValidatedItems(validItems) {
+      if (!Array.isArray(validItems) || validItems.length === 0) {
+        return [];
+      }
+
+      const queries = validItems.map((item) => {
+        const year = getTurnItemYear(item);
+        return {
+          type: getTurnItemType(item, type),
+          query: getTurnTitle(item) || "",
+          ...(year !== null ? { year } : {}),
+        };
+      });
+
+      const tmdbBatchStartedAt = Date.now();
+      let tmdbBatchDurationMs = 0;
+      let resolution;
+      let tmdbBatchFailed = false;
+
+      try {
+        resolution = await handleBatchSearchTmdb({ queries }, turnRuntime);
+        tmdbBatchDurationMs = Date.now() - tmdbBatchStartedAt;
+      } catch (error) {
+        tmdbBatchDurationMs = Date.now() - tmdbBatchStartedAt;
+        tmdbBatchFailed = true;
+        logger.warn("Orchestrator TMDB batch resolution failed", {
+          turn: turnNumber,
+          queryCount: queries.length,
+          durationMs: tmdbBatchDurationMs,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        resolution = { results: [] };
+      }
+
+      const resolvedEntries = Array.isArray(resolution?.results) ? resolution.results : [];
+
+      return validItems.map((item, index) => {
+        const title = getTurnTitle(item) || "";
+        const year = getTurnItemYear(item);
+        const requestedType = getTurnItemType(item, type);
+        const resolvedEntry = resolvedEntries[index] || {};
+        const hasEntryError = !!resolvedEntry?.error;
+        const hasUsableMatches = Array.isArray(resolvedEntry?.matches);
+        const selection =
+          tmdbBatchFailed || hasEntryError || !hasUsableMatches
+            ? {
+                match: null,
+                matchedType: undefined,
+                matchedTmdbId: undefined,
+                resolution: "none",
+              }
+            : selectTmdbMatchForCandidate(item, resolvedEntry);
+        const selectedMatch = selection.match;
+        // Hook for Task 2.6: map per-query TMDB misses/errors and resolution==="typeMismatch" to rejection buckets.
+        const tmdb_id = parseStrictInteger(selectedMatch?.tmdb_id ?? selectedMatch?.id ?? null);
+        const hasResolvedTmdbId = tmdb_id !== null && tmdb_id > 0;
+        const matchedTmdbId = hasResolvedTmdbId ? tmdb_id : selection.matchedTmdbId;
+        const matchedType = selection.matchedType;
+        const resolutionValue = hasResolvedTmdbId ? selection.resolution : selection.resolution || "none";
+
+        // handleBatchSearchTmdb currently exposes batch timing only, so each per-query
+        // telemetry event intentionally reuses the same batch wall-clock duration.
+        logger.agent("ORCHESTRATOR_TMDB_RESOLVE_RESULT", {
+          title,
+          year,
+          requestedType,
+          matchedTmdbId,
+          matchedType,
+          resolution: resolutionValue,
+          durationMs: tmdbBatchDurationMs,
+        });
+
+        return {
+          ...item,
+          tmdb_id: hasResolvedTmdbId ? tmdb_id : undefined,
+          matchedType,
+          matchedTmdbId,
+          resolution: resolutionValue,
+        };
+      });
     }
 
     async function handleTextResponse(rawText, gap) {
@@ -1016,6 +1251,7 @@ async function runAgentLoop(dependencies = {}) {
         const retryRawText = extractModelText(retryResponse);
         const retryHasText = typeof retryRawText === "string" && retryRawText.trim().length > 0;
         const retryEvaluation = evaluateTextResponse(retryRawText, gap);
+        const resolvedRetryItems = await resolveValidatedItems(retryEvaluation.validItems);
 
         violationsAfterRetry = retryEvaluation.violations;
 
@@ -1023,17 +1259,19 @@ async function runAgentLoop(dependencies = {}) {
           rawText: retryRawText,
           parseResult: retryEvaluation.parseResult,
           parsedRawItems: retryEvaluation.parsedItems,
-          parsedItems: retryEvaluation.validItems,
+          parsedItems: resolvedRetryItems,
           endedByText: retryHasText,
           toolLoopExhausted: false,
         });
       }
 
+      const resolvedItems = await resolveValidatedItems(firstEvaluation.validItems);
+
       return buildTurnResult({
         rawText: firstEvaluation.rawText,
         parseResult: firstEvaluation.parseResult,
         parsedRawItems: firstEvaluation.parsedItems,
-        parsedItems: firstEvaluation.validItems,
+        parsedItems: resolvedItems,
         endedByText: true,
         toolLoopExhausted: false,
       });
@@ -1109,12 +1347,15 @@ async function runAgentLoop(dependencies = {}) {
       const hasText = typeof rawText === "string" && rawText.trim().length > 0;
       const isToolOnly = functionCalls.length > 0 && !hasText;
 
-      if (hasText) {
+if (hasText) {
         const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
         return handleTextResponse(rawText, gap);
       }
 
       if (!isToolOnly) {
+        // Only fires for empty non-tool response after at least one favorites round.
+        // toolRoundsUsed reflects favorites-only rounds by construction (batch_search_tmdb
+        // removed from tool declarations in Phase 3; no other tool surface exists).
         if (toolRoundsUsed > 0) {
           const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
           const nudgeResult = await runNudge("empty_response_post_tool", gap, {
@@ -1141,34 +1382,7 @@ async function runAgentLoop(dependencies = {}) {
         );
       }
 
-      const currentSignature = computeToolBatchSignature(functionCalls);
       const currentToolRound = toolRoundsUsed;
-
-      if (lastToolBatchSignature !== null && currentSignature === lastToolBatchSignature) {
-        toolLoopDetected = true;
-        logger.agent("TOOL_LOOP_DETECTED", {
-          turn: turnNumber,
-          toolRound: currentToolRound,
-          signature: currentSignature.slice(0, 200),
-        });
-
-        const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
-        const nudgeResult = await runNudge("repeated_batch", gap, {
-          exhaustOnNonText: true,
-        });
-        if (nudgeResult) {
-          return nudgeResult;
-        }
-
-        return buildTurnResult({
-          rawText: "",
-          parseResult: parseTurnResponse(""),
-          parsedRawItems: [],
-          parsedItems: [],
-          endedByText: false,
-          toolLoopExhausted: false,
-        });
-      }
 
       toolCalls += functionCalls.length;
       functionCalls.forEach((call) => {
@@ -1241,8 +1455,6 @@ async function runAgentLoop(dependencies = {}) {
         throw toolError;
       }
 
-      lastToolBatchSignature = currentSignature;
-
       logger.agent("TOOL_CALL_RESPONSE", {
         turn: turnNumber,
         toolRound: currentToolRound,
@@ -1260,15 +1472,6 @@ async function runAgentLoop(dependencies = {}) {
       toolRoundsUsed += 1;
 
       if (toolRoundsUsed >= effectiveMaxToolRoundsPerTurn) {
-        const gap = Math.max(0, parseStrictInteger(turnContext?.gap) ?? 0);
-        const nudgeResult = await runNudge("cap_reached", gap, {
-          exhaustOnNonText: true,
-          enforceCap: false,
-        });
-        if (nudgeResult) {
-          return nudgeResult;
-        }
-
         return buildTurnResult({
           rawText: "",
           parseResult: parseTurnResponse(""),
@@ -1354,6 +1557,22 @@ async function runAgentLoop(dependencies = {}) {
     });
 
     collected.push(...turnFilter.accepted);
+    acceptedSoFar.push(
+      ...turnFilter.accepted
+        .map((item) => formatTurnTitleWithYear(item))
+        .filter(Boolean)
+    );
+    lastTurnRejectedTitles =
+      turnFilter.rejectedTitles && typeof turnFilter.rejectedTitles === "object"
+        ? turnFilter.rejectedTitles
+        : {
+            watched: [],
+            rated: [],
+            history: [],
+            duplicate: [],
+            typeMismatch: [],
+            notFound: [],
+          };
     droppedNoIdTotal += 0;
     droppedMissingTitleTotal += 0;
     droppedCollectedTotal += turnFilter.droppedCollectedCount || 0;
@@ -1376,7 +1595,6 @@ async function runAgentLoop(dependencies = {}) {
       contractRetryUsed: !!turnResult.contractRetryUsed,
       emptyResponseNudgeUsed: !!turnResult.emptyResponseNudgeUsed,
       nudgeReason: turnResult.nudgeReason || null,
-      toolLoopDetected: !!turnResult.toolLoopDetected,
       violationsBeforeRetry: Array.isArray(turnResult.violationsBeforeRetry)
         ? turnResult.violationsBeforeRetry
         : [],
@@ -1392,6 +1610,9 @@ async function runAgentLoop(dependencies = {}) {
         duplicateProposed: turnFilter.droppedProposedCount || 0,
         watched: turnFilter.droppedWatchedCount || 0,
         rated: turnFilter.droppedRatedCount || 0,
+        history: turnFilter.droppedHistoryCount || 0,
+        typeMismatch: turnFilter.droppedTypeMismatchCount || 0,
+        notFound: turnFilter.droppedNotFoundCount || 0,
       },
       gap,
     });

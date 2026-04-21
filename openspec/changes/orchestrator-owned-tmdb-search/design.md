@@ -159,8 +159,8 @@ Note: `droppedHistory` is **not present** in current `TURN_RESULT`; this change 
 - New event: **`ORCHESTRATOR_TMDB_RESOLVE_RESULT`** to replace TMDB-resolution visibility previously provided by model-tool `TOOL_EXEC_RESULT` when `batch_search_tmdb` ran via `executeTools` (`utils/agent-tools.js:363-381`).
 
 `ORCHESTRATOR_TMDB_RESOLVE_RESULT` payload requirements:
-- emitted once per orchestrator-owned TMDB resolution batch
-- includes per-query entries with: `title`, `year`, `requestedType`, `matchedTmdbId`, `matchedType`, `resolution` (`matched|notFound|typeMismatch`), `durationMs`
+- emitted once per query within an orchestrator-owned TMDB resolution batch
+- includes: `title`, `year`, `requestedType`, `matchedTmdbId`, `matchedType`, `resolution` (`exact|title+type|type-only|typeMismatch|none`), `durationMs`
 
 **Rationale**:
 - Current TMDB visibility in logs depends on tool execution events that will not fire once orchestrator calls `handleBatchSearchTmdb` directly (`utils/agent-tools.js:268-315`).
@@ -170,7 +170,7 @@ Note: `droppedHistory` is **not present** in current `TURN_RESULT`; this change 
 **Choice**: Preserve per-query isolation from existing `Promise.allSettled` behavior (`utils/agent-tools.js:271-315`).
 - Per-query failure with empty `matches` + `error` becomes rejection `notFound` (and increments diagnostics counter for tmdbQueryError).
 - Candidate conversion/schema issues remain under validation/violation handling (`failedConversions` stays for downstream transformation errors, not TMDB misses).
-- `ORCHESTRATOR_TMDB_RESOLVE_RESULT` MUST still emit per-query entries for failed queries with `resolution=notFound` and populated `durationMs`.
+- `ORCHESTRATOR_TMDB_RESOLVE_RESULT` MUST still emit per-query entries for failed queries with `resolution=none` and populated `durationMs`.
 
 **Alternatives considered**:
 - Fail whole turn on any query error.

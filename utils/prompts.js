@@ -1,5 +1,3 @@
-const BATCH_SEARCH_TOOL_NAME = ["batch_search_", "tmdb"].join("");
-
 function getQuery(ctx = {}) {
   return ctx.query || ctx.searchQuery || "";
 }
@@ -14,8 +12,8 @@ function getNumResults(ctx = {}) {
 
 function buildAgentOutputContract(numResults, { includeWatchedRule = false } = {}) {
   const { formatSchemaForPrompt } = require("./agent-validate");
-  const lines = [
-    `You MUST return exactly ${numResults} items. Do not return fewer. If you cannot find enough candidates, call your tools again to search for more before finalizing. Return as a valid JSON array of objects with exactly these required fields: type, title, year, tmdb_id.`,
+const lines = [
+    `You MUST return exactly ${numResults} items. Do not return fewer. If you cannot find enough candidates, call your tools again to search for more before finalizing. Return as a valid JSON array of objects with exactly these required fields: type, title, year.`,
     "Each item must include all required fields with the correct types:",
     formatSchemaForPrompt(),
   ];
@@ -36,8 +34,8 @@ function buildAgentSystemPrompt(ctx = {}) {
     `You are a ${type} recommendation agent.`,
     "Act as a pure candidate generator for the current turn.",
     `Produce exactly ${numResults} new candidate recommendations and return only a JSON array.`,
-    `Resolve candidate titles with one ${BATCH_SEARCH_TOOL_NAME} call, using a single batch instead of one title at a time.`,
-    "The orchestrator handles watched and rated filtering locally; do not call a watch-status tool or try to filter by watch history yourself.",
+    "A single tool is available: get_user_favorites. Use it when you need to check the user's favorites.",
+    "The orchestrator handles TMDB disambiguation and will resolve title+year+type to a TMDB identity. Do not emit tmdb_id — the orchestrator owns that resolution.",
     "Do not re-propose any title already accepted or already proposed.",
     "Do not include markdown, prose, code fences, numbered steps, or commentary.",
     ...buildAgentOutputContract(numResults),
@@ -97,6 +95,67 @@ function toArray(value) {
   return [];
 }
 
+const MAX_REFINEMENT_LIST_ENTRIES = 50;
+
+function normalizeFeedbackYear(value) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string" && /^\d{4}$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+
+  return null;
+}
+
+function toTitleYearLabel(item) {
+  if (typeof item === "string") {
+    const normalized = item.trim();
+    return normalized || null;
+  }
+
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const title = String(
+    item.title || item.name || item.original_title || item.original_name || ""
+  ).trim();
+  if (!title) {
+    return null;
+  }
+
+  const year = normalizeFeedbackYear(item.year);
+  return year !== null ? `${title} (${year})` : title;
+}
+
+function formatRefinementList(items, { limit = MAX_REFINEMENT_LIST_ENTRIES } = {}) {
+  const labels = toArray(items)
+    .map((item) => toTitleYearLabel(item))
+    .filter(Boolean);
+
+  if (labels.length === 0) {
+    return {
+      count: 0,
+      text: "none",
+    };
+  }
+
+  if (labels.length <= limit) {
+    return {
+      count: labels.length,
+      text: labels.join(", "),
+    };
+  }
+
+  const shown = labels.slice(0, limit);
+  return {
+    count: labels.length,
+    text: `${shown.join(", ")}, ... (+${labels.length - shown.length} more)`,
+  };
+}
+
 function formatTitleList(items = []) {
   return toArray(items)
     .map((item) => {
@@ -128,31 +187,62 @@ function formatContextValue(value) {
 }
 
 function buildTurnMessage(ctx = {}) {
-  const { formatSchemaForPrompt } = require("./agent-validate");
   const query = getQuery(ctx);
   const type = getType(ctx);
   const numResults = getNumResults(ctx);
   const gap = typeof ctx.gap === "number"
     ? ctx.gap
     : Math.max(0, numResults - toArray(ctx.collected).length);
-  const collectedTitles = formatTitleList(ctx.collected);
+  const remainingGap = typeof ctx.remainingGap === "number"
+    ? Math.max(0, Math.trunc(ctx.remainingGap))
+    : Math.max(0, Math.trunc(gap));
+  const acceptedSoFar = formatRefinementList(
+    toArray(ctx.acceptedSoFar).length > 0 ? ctx.acceptedSoFar : ctx.collected
+  );
   const proposedTitles = formatTitleList(ctx.proposedTitles);
+  const rejectedBuckets =
+    ctx.rejectedThisTurn && typeof ctx.rejectedThisTurn === "object"
+      ? ctx.rejectedThisTurn
+      : {};
   const discoveredGenres = formatTitleList(ctx.discoveredGenres);
   const genreAnalysis = formatContextValue(ctx.genreAnalysis);
   const favoritesContext = formatContextValue(ctx.favoritesContext);
+  const rejectionBucketOrder = [
+    "watched",
+    "rated",
+    "history",
+    "duplicate",
+    "typeMismatch",
+    "notFound",
+  ];
 
   const lines = [
     "Generate the next recommendation candidates for this query.",
     `Query: ${query}`,
     `Type: ${type}`,
     `Requested count: ${numResults}`,
-    `Remaining gap: ${gap}`,
-    `Collected titles: ${collectedTitles || "none"}`,
+    `Accepted so far (${acceptedSoFar.count}): ${acceptedSoFar.text}`,
+    "Rejected this turn:",
+    `Remaining gap: ${remainingGap}`,
     `Already proposed titles: ${proposedTitles || "none"}`,
-    collectedTitles || proposedTitles
+    acceptedSoFar.count > 0 || proposedTitles
       ? "Do not re-propose any title already listed above."
       : "Do not re-propose any previously accepted or proposed title.",
   ];
+
+  let hasRejectedBucket = false;
+  rejectionBucketOrder.forEach((bucketName) => {
+    const rendered = formatRefinementList(rejectedBuckets[bucketName]);
+    if (!rendered.count) {
+      return;
+    }
+    hasRejectedBucket = true;
+    lines.push(`- ${bucketName}: ${rendered.text}`);
+  });
+
+  if (!hasRejectedBucket) {
+    lines.push("- none");
+  }
 
   if (discoveredGenres) {
     lines.push(`Discovered genres: ${discoveredGenres}`);
@@ -167,11 +257,9 @@ function buildTurnMessage(ctx = {}) {
   }
 
   lines.push(
-    `Resolve the candidate titles by calling ${BATCH_SEARCH_TOOL_NAME} in one batch, not one title at a time.`,
-    "Return exactly gap new candidates as a JSON array only.",
-    "Each candidate must include exactly these required fields: type, title, year, tmdb_id.",
-    "Each candidate must include all required fields with the correct types:",
-    formatSchemaForPrompt(),
+    "A single tool is available: get_user_favorites. Use it when you need to check the user's favorites.",
+    "The orchestrator resolves TMDB identity from title+year+type; do not emit tmdb_id or call TMDB yourself.",
+    ...buildAgentOutputContract(remainingGap),
     "Use only new candidates that are not already in collected or proposed titles.",
     "Do not include markdown, code fences, explanations, or any text outside the JSON array."
   );

@@ -2,7 +2,6 @@ const AGENT_ITEM_SCHEMA = Object.freeze({
   type: "string",
   title: "string",
   year: "number",
-  tmdb_id: "number",
 });
 
 function formatSchemaForPrompt(schema = AGENT_ITEM_SCHEMA) {
