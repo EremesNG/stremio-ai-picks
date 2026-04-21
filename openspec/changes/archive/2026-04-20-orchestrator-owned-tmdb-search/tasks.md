@@ -19,7 +19,7 @@
     - Expected: Zero exit code; no syntax errors printed.
 
 ## Phase 2 — Orchestrator TMDB invocation
-- [~] 2.1 Export `handleBatchSearchTmdb` for direct orchestrator use while preserving existing handler behavior. (Files: `utils/agent-tools.js` | Depends on: 1.1 | Satisfies: orchestrator-contract spec §Resolve turn candidates through orchestrator-owned TMDB search; implements design D2)
+- [x] 2.1 Export `handleBatchSearchTmdb` for direct orchestrator use while preserving existing handler behavior. (Files: `utils/agent-tools.js` | Depends on: 1.1 | Satisfies: orchestrator-contract spec §Resolve turn candidates through orchestrator-owned TMDB search; implements design D2)
   - Verification:
     - Run: `rg "handleBatchSearchTmdb|module\.exports" utils/agent-tools.js`
     - Expected: `handleBatchSearchTmdb` is exported and existing handler signature/logic remains present.
