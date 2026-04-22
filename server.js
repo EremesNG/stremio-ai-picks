@@ -153,7 +153,7 @@ function startServer() {
     initDb().catch((err) => logger.error("Failed to initialize database", { error: err.message }));
     logger.info("Running a one-time purge of empty AI cache entries...");
     const purgeStats = purgeEmptyAiCacheEntries();
-    logger.info("Empty AI cache purge complete.", { purged: purgeStats.purged, remaining: purgeStats.remaining });
+    logger.info("Empty AI cache purge complete.", purgeStats);
     hydrateQueryCounter().catch((err) => logger.error("Failed to hydrate query counter", { error: err.message }));
 
     if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
@@ -794,8 +794,14 @@ function startServer() {
         routePath + "cache/clear/ai",
         validateAdminToken,
         (req, res) => {
-          const { clearAiCache } = require("./addon");
-          res.json(clearAiCache());
+          try {
+            const { clearAiCache } = require("./addon");
+            const result = clearAiCache();
+            res.json(result);
+          } catch (error) {
+            logger.error("Error in cache/clear/ai endpoint:", { error: error.message, stack: error.stack });
+            res.status(500).json({ error: "Internal server error", message: error.message });
+          }
         }
       );
 
@@ -872,8 +878,13 @@ function startServer() {
         routePath + "cache/clear/trakt",
         validateAdminToken,
         (req, res) => {
-          const { clearTraktCache } = require("./addon");
-          res.json(clearTraktCache());
+          try {
+            const { clearTraktCache } = require("./addon");
+            const result = clearTraktCache();
+            res.json(result);
+          } catch (error) {
+            res.status(500).json({ error: "Internal server error", message: error.message });
+          }
         }
       );
 
@@ -920,34 +931,39 @@ function startServer() {
         routePath + "cache/clear/all",
         validateAdminToken,
         (req, res) => {
-          const {
-            clearTmdbCache,
-            clearTmdbDetailsCache,
-            clearTmdbDiscoverCache,
-            clearAiCache,
-            clearRpdbCache,
-            clearTraktCache,
-            clearTraktRawDataCache,
-            clearQueryAnalysisCache,
-          } = require("./addon");
-          const tmdbResult = clearTmdbCache();
-          const tmdbDetailsResult = clearTmdbDetailsCache();
-          const tmdbDiscoverResult = clearTmdbDiscoverCache();
-          const aiResult = clearAiCache();
-          const rpdbResult = clearRpdbCache();
-          const traktResult = clearTraktCache();
-          const traktRawResult = clearTraktRawDataCache();
-          const queryAnalysisResult = clearQueryAnalysisCache();
-          res.json({
-            tmdb: tmdbResult,
-            tmdbDetails: tmdbDetailsResult,
-            tmdbDiscover: tmdbDiscoverResult,
-            ai: aiResult,
-            rpdb: rpdbResult,
-            trakt: traktResult,
-            traktRaw: traktRawResult,
-            queryAnalysis: queryAnalysisResult,
-          });
+          try {
+            const {
+              clearTmdbCache,
+              clearTmdbDetailsCache,
+              clearTmdbDiscoverCache,
+              clearAiCache,
+              clearRpdbCache,
+              clearTraktCache,
+              clearTraktRawDataCache,
+              clearQueryAnalysisCache,
+            } = require("./addon");
+            const tmdbResult = clearTmdbCache();
+            const tmdbDetailsResult = clearTmdbDetailsCache();
+            const tmdbDiscoverResult = clearTmdbDiscoverCache();
+            const aiResult = clearAiCache();
+            const rpdbResult = clearRpdbCache();
+            const traktResult = clearTraktCache();
+            const traktRawResult = clearTraktRawDataCache();
+            const queryAnalysisResult = clearQueryAnalysisCache();
+            res.json({
+              tmdb: tmdbResult,
+              tmdbDetails: tmdbDetailsResult,
+              tmdbDiscover: tmdbDiscoverResult,
+              ai: aiResult,
+              rpdb: rpdbResult,
+              trakt: traktResult,
+              traktRaw: traktRawResult,
+              queryAnalysis: queryAnalysisResult,
+            });
+          } catch (error) {
+            logger.error("Error in cache/clear/all endpoint:", { error: error.message, stack: error.stack });
+            res.status(500).json({ error: "Internal server error", message: error.message });
+          }
         }
       );
 
