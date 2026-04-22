@@ -21,7 +21,6 @@ For deep work on a specific folder, also read that folder's `codemap.md`.
 
 ```bash
 pnpm start              # Production: node server.js
-pnpm start:dev          # Dev with logging (cross-env ENABLE_LOGGING=true node server.js)
 node -c <file.js>       # Syntax-check a file without running it — use after every edit
 ```
 

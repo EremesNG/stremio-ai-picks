@@ -16,6 +16,7 @@ const {
   setStatValue,
   getAiCache,
   setAiCache,
+  updateAiCacheData,
   deleteAiCache,
   purgeExpiredAiCache,
   clearAiCache: clearAiCacheDb,
@@ -3063,6 +3064,175 @@ function createFilterCandidates({ traktWatchedIdSet, traktRatedIdSet }) {
   };
 }
 
+function normalizeRecommendationBuckets(recommendations) {
+  return {
+    movies: Array.isArray(recommendations?.movies) ? recommendations.movies : [],
+    series: Array.isArray(recommendations?.series) ? recommendations.series : [],
+  };
+}
+
+function countRecommendationBuckets(recommendations) {
+  const normalized = normalizeRecommendationBuckets(recommendations);
+  return normalized.movies.length + normalized.series.length;
+}
+
+function normalizeRecommendationItemType(value, fallbackType = "movie") {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+
+  if (normalized === "movie") {
+    return "movie";
+  }
+
+  if (normalized === "series" || normalized === "show") {
+    return "series";
+  }
+
+  return fallbackType === "series" ? "series" : "movie";
+}
+
+function extractRecommendationYear(item) {
+  const directYear = Number.parseInt(item?.year, 10);
+  if (Number.isFinite(directYear) && directYear > 0) {
+    return directYear;
+  }
+
+  const releaseInfo =
+    item?.releaseInfo !== undefined && item?.releaseInfo !== null
+      ? String(item.releaseInfo)
+      : "";
+  const releaseMatch = releaseInfo.match(/\b(\d{4})\b/);
+  const parsedReleaseYear = releaseMatch ? Number.parseInt(releaseMatch[1], 10) : NaN;
+  return Number.isFinite(parsedReleaseYear) && parsedReleaseYear > 0
+    ? parsedReleaseYear
+    : null;
+}
+
+function extractRecommendationTmdbId(item) {
+  const direct = Number.parseInt(item?.tmdb_id, 10);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+
+  const idValue =
+    item?.id !== undefined && item?.id !== null ? String(item.id).trim() : "";
+  const tmdbMatch = idValue.match(/^tmdb:(\d+)$/i);
+  if (!tmdbMatch) {
+    return null;
+  }
+
+  const fromId = Number.parseInt(tmdbMatch[1], 10);
+  return Number.isFinite(fromId) && fromId > 0 ? fromId : null;
+}
+
+function buildRecommendationTitleToken(item, fallbackType) {
+  const type = normalizeRecommendationItemType(item?.type, fallbackType);
+  const rawTitle =
+    typeof item?.name === "string" && item.name.trim()
+      ? item.name
+      : typeof item?.title === "string" && item.title.trim()
+        ? item.title
+        : "";
+  const normalizedTitle = rawTitle.trim().toLowerCase();
+
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  const year = extractRecommendationYear(item);
+  return year !== null ? `${type}:${normalizedTitle}:${year}` : `${type}:${normalizedTitle}`;
+}
+
+function extractRecommendationTitles(recommendations) {
+  const normalized = normalizeRecommendationBuckets(recommendations);
+  const tokens = [];
+
+  const collectTokens = (items, fallbackType) => {
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      if (!item || typeof item !== "object") {
+        return;
+      }
+
+      const titleToken = buildRecommendationTitleToken(item, fallbackType);
+      if (titleToken) {
+        tokens.push(titleToken);
+      }
+
+      const tmdbId = extractRecommendationTmdbId(item);
+      if (tmdbId !== null) {
+        const type = normalizeRecommendationItemType(item?.type, fallbackType);
+        tokens.push(`${type}:${tmdbId}`);
+      }
+    });
+  };
+
+  collectTokens(normalized.movies, "movie");
+  collectTokens(normalized.series, "series");
+
+  return [...new Set(tokens)];
+}
+
+function buildRecommendationFallbackKey(item, fallbackType) {
+  const idValue =
+    item?.id !== undefined && item?.id !== null ? String(item.id).trim() : "";
+  if (idValue && /^tmdb:\d+$/i.test(idValue)) {
+    return idValue.toLowerCase();
+  }
+
+  const type = normalizeRecommendationItemType(item?.type, fallbackType);
+  const rawName =
+    typeof item?.name === "string" && item.name.trim()
+      ? item.name
+      : typeof item?.title === "string" && item.title.trim()
+        ? item.title
+        : "";
+  const name = rawName.trim().toLowerCase();
+  const year = extractRecommendationYear(item);
+
+  if (!name && year === null) {
+    return null;
+  }
+
+  return `${type}:${name}:${year ?? ""}`;
+}
+
+function mergeRecommendationListByTmdbId(cachedItems, newItems, fallbackType) {
+  const merged = new Map();
+  const withoutKey = [];
+
+  [...(Array.isArray(cachedItems) ? cachedItems : []), ...(Array.isArray(newItems) ? newItems : [])].forEach((item) => {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+
+    const tmdbId = extractRecommendationTmdbId(item);
+    if (tmdbId !== null) {
+      const type = normalizeRecommendationItemType(item?.type, fallbackType);
+      merged.set(`${type}:${tmdbId}`, item);
+      return;
+    }
+
+    const fallbackKey = buildRecommendationFallbackKey(item, fallbackType);
+    if (fallbackKey) {
+      merged.set(fallbackKey, item);
+      return;
+    }
+
+    withoutKey.push(item);
+  });
+
+  return [...merged.values(), ...withoutKey];
+}
+
+function mergeRecommendationBuckets(cachedRecommendations, newRecommendations) {
+  const cached = normalizeRecommendationBuckets(cachedRecommendations);
+  const fresh = normalizeRecommendationBuckets(newRecommendations);
+
+  return {
+    movies: mergeRecommendationListByTmdbId(cached.movies, fresh.movies, "movie"),
+    series: mergeRecommendationListByTmdbId(cached.series, fresh.series, "series"),
+  };
+}
+
 const catalogHandler = async function (args, req) {
   const startTime = Date.now();
   const { id, type, extra } = args;
@@ -3104,6 +3274,7 @@ const catalogHandler = async function (args, req) {
     }
 
     let searchQuery = "";
+    let minTmdbRating = undefined;
     if (typeof extra === "string" && extra.includes("search=")) {
       searchQuery = decodeURIComponent(extra.split("search=")[1]);
     } else if (extra?.search) {
@@ -3142,7 +3313,20 @@ const catalogHandler = async function (args, req) {
             } else {
                 searchQuery = entry;
             }
-            logger.info("Using custom homepage query from list", { type, query: searchQuery, index: queryIndex });
+            
+            // Parse optional minTmdbRating suffix: find LAST @@ and check if followed by valid number (0-10)
+            const lastAtIndex = searchQuery.lastIndexOf("@@");
+            if (lastAtIndex !== -1) {
+              const afterAt = searchQuery.substring(lastAtIndex + 2).trim();
+              const isStrictNumericSuffix = /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(afterAt);
+              const parsed = isStrictNumericSuffix ? Number(afterAt) : NaN;
+              if (!isNaN(parsed) && isFinite(parsed) && parsed >= 0 && parsed <= 10) {
+                minTmdbRating = parsed;
+                searchQuery = searchQuery.substring(0, lastAtIndex);
+              }
+            }
+            
+            logger.info("Using custom homepage query from list", { type, query: searchQuery, index: queryIndex, minTmdbRating });
           }
         }
 
@@ -3462,6 +3646,100 @@ const catalogHandler = async function (args, req) {
     const traktIdentity = traktUsername ? `trakt_${traktUsername}` : "no_trakt";
     const cacheKey = `${searchQuery}_${type}_${traktIdentity}`;
     const tursoCache = enableAiCache ? await getAiCache(cacheKey) : null;
+    let partialCacheContext = null;
+
+    const buildCatalogResponseFromRecommendations = async (
+      recommendationsData,
+      source = "cache"
+    ) => {
+      const normalizedRecommendations = normalizeRecommendationBuckets(recommendationsData);
+      const selectedRecommendations =
+        type === "movie"
+          ? normalizedRecommendations.movies.slice(0, numResults)
+          : normalizedRecommendations.series.slice(0, numResults);
+
+      logger.debug("Converting cached recommendations to meta objects", {
+        recommendationsCount: selectedRecommendations.length,
+        type,
+        source,
+      });
+
+      if (selectedRecommendations.length === 0) {
+        logger.error("AI returned no valid recommendations", {
+          query: searchQuery,
+          type,
+          model: geminiModel,
+          source,
+        });
+        const errorMeta = createErrorMeta('No Results Found', 'The AI could not find any recommendations for your query. Please try rephrasing your search.');
+        return { metas: [errorMeta] };
+      }
+
+      const metaPromises = selectedRecommendations.map((item) =>
+        toStremioMeta(
+          item,
+          platform,
+          tmdbKey,
+          rpdbKey,
+          rpdbPosterType,
+          language,
+          configData,
+          includeAdult
+        )
+      );
+
+      const metas = (await Promise.all(metaPromises)).filter(Boolean);
+
+      if (metas.length === 0 && !exactMatchMeta) {
+        logger.error("All AI recommendations failed TMDB lookup", {
+          query: searchQuery,
+          type,
+          recommendationCount: selectedRecommendations.length,
+          source,
+        });
+        const errorMeta = createErrorMeta('Data Fetch Error', 'Could not retrieve details for any of the AI recommendations. This may be a temporary TMDB issue.');
+        return { metas: [errorMeta] };
+      }
+
+      logger.debug("Catalog handler response from cache", {
+        metasCount: metas.length,
+        firstMeta: metas[0],
+        source,
+      });
+
+      let finalMetas = metas;
+      if (exactMatchMeta) {
+        finalMetas = [
+          exactMatchMeta,
+          ...metas.filter((meta) => meta.id !== exactMatchMeta.id),
+        ];
+        logger.info("Added exact match as first result (from cache)", {
+          searchQuery,
+          exactMatchTitle: exactMatchMeta.name,
+          totalResults: finalMetas.length,
+          exactMatchId: exactMatchMeta.id,
+          source,
+        });
+      }
+
+      if (finalMetas.length === 0) {
+        logger.error("No results found for query (from cache)", { query: searchQuery, type });
+        const errorMeta = createErrorMeta('No Results Found', 'The AI could not find any recommendations for your query. Please try rephrasing your search.');
+        return { metas: [errorMeta] };
+      }
+
+      incrementQueryCounter(finalMetas.length);
+      logger.info(
+        "Query counter incremented for successful cached search",
+        {
+          searchQuery,
+          resultCount: finalMetas.length,
+          source,
+        }
+      );
+
+      return { metas: finalMetas };
+    };
 
     // Check cache for all queries (including Trakt users and homepage queries)
     if (tursoCache) {
@@ -3479,6 +3757,7 @@ const catalogHandler = async function (args, req) {
         requestedResults: numResults,
         hasMovies: !!cached.data?.recommendations?.movies?.length,
         hasSeries: !!cached.data?.recommendations?.series?.length,
+        isFull: cached.isFull === true,
       });
 
       if (cached.configNumResults && numResults > cached.configNumResults) {
@@ -3498,96 +3777,51 @@ const catalogHandler = async function (args, req) {
         });
         await deleteAiCache(cacheKey);
       } else {
-        // Convert cached recommendations to Stremio meta objects
-        const selectedRecommendations =
-          type === "movie"
-            ? cached.data.recommendations.movies || []
-            : cached.data.recommendations.series || [];
+        const cachedRecommendations = normalizeRecommendationBuckets(cached.data.recommendations);
+        const cachedCount = countRecommendationBuckets(cachedRecommendations);
+        const gap = numResults - cachedCount;
 
-        logger.debug("Converting cached recommendations to meta objects", {
-          recommendationsCount: selectedRecommendations.length,
-          type,
-        });
-
-        if (selectedRecommendations.length === 0) {
-          logger.error("AI returned no valid recommendations", { 
-            query: searchQuery, 
-            type: type,
-            model: geminiModel,
-            responseText: text
-          });
-          const errorMeta = createErrorMeta('No Results Found', 'The AI could not find any recommendations for your query. Please try rephrasing your search.');
-          return { metas: [errorMeta] };
+        if (cached.isFull === true) {
+          return buildCatalogResponseFromRecommendations(cachedRecommendations, "cache-full-hit");
         }
 
-        const metaPromises = selectedRecommendations.map((item) =>
-          toStremioMeta(
-            item,
-            platform,
-            tmdbKey,
-            rpdbKey,
-            rpdbPosterType,
-            language,
-            configData,
-            includeAdult
-          )
-        );
-
-        const metas = (await Promise.all(metaPromises)).filter(Boolean);
-
-        if (metas.length === 0 && !exactMatchMeta) {
-          logger.error("All AI recommendations failed TMDB lookup", {
+        if (gap <= 0) {
+          logger.info("AI cache partial hit but already satisfies requested count", {
+            cacheKey,
             query: searchQuery,
-            type: type,
-            recommendationCount: selectedRecommendations.length
+            type,
+            cachedCount,
+            requestedCount: numResults,
           });
-          const errorMeta = createErrorMeta('Data Fetch Error', 'Could not retrieve details for any of the AI recommendations. This may be a temporary TMDB issue.');
-          return { metas: [errorMeta] };
+          return buildCatalogResponseFromRecommendations(cachedRecommendations, "cache-partial-satisfies-request");
         }
 
-        logger.debug("Catalog handler response from cache", {
-          metasCount: metas.length,
-          firstMeta: metas[0],
+        partialCacheContext = {
+          cacheKey,
+          cachedRecommendations,
+          cachedCount,
+          gap,
+          preProposedTitles: extractRecommendationTitles(cachedRecommendations),
+        };
+
+        logger.info("AI cache partial hit — items cached, remaining gap, calling agent for gap fill", {
+          cacheKey,
+          query: searchQuery,
+          type,
+          cachedCount,
+          gap,
         });
-
-        let finalMetas = metas;
-        if (exactMatchMeta) {
-          finalMetas = [
-            exactMatchMeta,
-            ...metas.filter((meta) => meta.id !== exactMatchMeta.id),
-          ];
-          logger.info("Added exact match as first result (from cache)", {
-            searchQuery,
-            exactMatchTitle: exactMatchMeta.name,
-            totalResults: finalMetas.length,
-            exactMatchId: exactMatchMeta.id,
-          });
-        }
-
-        if (finalMetas.length === 0) {
-            logger.error("No results found for query (from cache)", { query: searchQuery, type: type });
-            const errorMeta = createErrorMeta('No Results Found', 'The AI could not find any recommendations for your query. Please try rephrasing your search.');
-            return { metas: [errorMeta] };
-        }
-
-        // Increment counter for successful cached results
-        if (finalMetas.length > 0) {
-          incrementQueryCounter(finalMetas.length);
-          logger.info(
-            "Query counter incremented for successful cached search",
-            {
-              searchQuery,
-              resultCount: finalMetas.length,
-            }
-          );
-        }
-
-        return { metas: finalMetas };
       }
     }
 
     if (!enableAiCache) {
       logger.info("AI cache bypassed (disabled in config)", {
+        cacheKey,
+        query: searchQuery,
+        type,
+      });
+    } else if (partialCacheContext) {
+      logger.debug("AI cache miss log skipped due to partial gap-fill path", {
         cacheKey,
         query: searchQuery,
         type,
@@ -3606,7 +3840,7 @@ const catalogHandler = async function (args, req) {
     const agentSearchTMDB = (query, mediaType, year) =>
       searchTMDB(query, mediaType, year, tmdbKey, language, includeAdult);
 
-    const agentDependencyBundle = {
+     const agentDependencyBundle = {
       geminiApiKey: geminiKey,
       geminiModel,
       modelName: geminiModel,
@@ -3614,6 +3848,8 @@ const catalogHandler = async function (args, req) {
       type,
       searchTMDB: agentSearchTMDB,
       tmdbApiKey: tmdbKey,
+      language,
+      includeAdult,
       traktUsername,
       traktAccessToken,
       traktClientId,
@@ -3634,6 +3870,7 @@ const catalogHandler = async function (args, req) {
       favoritesCacheTtlMs: null,
       logger,
       toolDeclarations,
+      minTmdbRating,
     };
 
     let agentRecommendations = null;
@@ -3713,25 +3950,34 @@ const catalogHandler = async function (args, req) {
         type,
         hasTraktAuth,
         traktUsername,
-        numResults,
+        numResults: partialCacheContext ? partialCacheContext.gap : numResults,
+        totalRequestedResults: numResults,
         doNotRecommendCount: doNotRecommend.length,
+        gapFillMode: !!partialCacheContext,
       });
+
+      const requestedAgentNumResults = partialCacheContext
+        ? partialCacheContext.gap
+        : numResults;
 
       logger.agent("AGENT_DISPATCH", {
         query: searchQuery,
         traktUsername,
-        numResults,
+        numResults: requestedAgentNumResults,
         watchedSize: traktWatchedIdSet.size,
         ratedSize: traktRatedIdSet.size,
         historySize: traktHistoryIdSet.size,
+        gapFillMode: !!partialCacheContext,
       });
 
       try {
-        const agentResult = await runAgentLoop({
+         const agentResult = await runAgentLoop({
           ...agentDependencyBundle,
-          numResults,
+          numResults: requestedAgentNumResults,
+          preProposedTitles: partialCacheContext?.preProposedTitles,
           filterWatched: effectiveFilterWatched,
           maxTurns,
+          minTmdbRating,
           traktWatchedIdSet,
           traktRatedIdSet,
           traktHistoryIdSet,
@@ -3776,16 +4022,18 @@ const catalogHandler = async function (args, req) {
             query: searchQuery,
             type,
             collectedCount: agentResultCount,
-            requestedCount: numResults,
+            requestedCount: requestedAgentNumResults,
             reason: agentReason || undefined,
+            gapFillMode: !!partialCacheContext,
           });
-          if (agentResultCount < numResults) {
+          if (agentResultCount < requestedAgentNumResults) {
             logger.warn("Agent recommendation path returned fewer results than requested", {
               query: searchQuery,
               type,
               collectedCount: agentResultCount,
-              requestedCount: numResults,
+              requestedCount: requestedAgentNumResults,
               reason: agentReason || "shorter_than_requested",
+              gapFillMode: !!partialCacheContext,
             });
           }
         } else {
@@ -3831,13 +4079,42 @@ const catalogHandler = async function (args, req) {
           query: searchQuery,
           type,
           recommendationCount: agentRecommendations.length,
+          gapFillMode: !!partialCacheContext,
         });
       } else {
         logger.warn("Unified recommendation path returned no recommendations", {
           query: searchQuery,
           type,
           reason: agentFallbackReason || "agent_returned_no_results",
+          gapFillMode: !!partialCacheContext,
         });
+
+        if (partialCacheContext) {
+          await updateAiCacheData(
+            cacheKey,
+            {
+              recommendations: partialCacheContext.cachedRecommendations,
+              fromCache: false,
+            },
+            numResults,
+            false
+          );
+
+          logger.info("AI cache gap fill complete — no new items returned", {
+            cacheKey,
+            query: searchQuery,
+            type,
+            newCount: 0,
+            totalCount: partialCacheContext.cachedCount,
+            isFull: false,
+            reason: agentFallbackReason || "agent_returned_no_results",
+          });
+
+          return buildCatalogResponseFromRecommendations(
+            partialCacheContext.cachedRecommendations,
+            "cache-gap-fallback"
+          );
+        }
       }
 
       // Process the response JSON
@@ -3929,42 +4206,76 @@ const catalogHandler = async function (args, req) {
         fromCache: false,
       };
 
-      const recommendationsToCache = finalResult.recommendations;
+      let responseResult = finalResult;
+      if (partialCacheContext) {
+        const mergedRecommendations = mergeRecommendationBuckets(
+          partialCacheContext.cachedRecommendations,
+          finalResult.recommendations
+        );
+        const mergedTotalCount = countRecommendationBuckets(mergedRecommendations);
+        const newCount = countRecommendationBuckets(finalResult.recommendations);
+        const isFull = mergedTotalCount >= numResults;
+
+        responseResult = {
+          recommendations: mergedRecommendations,
+          fromCache: false,
+        };
+
+        await updateAiCacheData(cacheKey, responseResult, numResults, isFull);
+
+        logger.info("AI cache gap fill complete", {
+          cacheKey,
+          query: searchQuery,
+          type,
+          cachedCount: partialCacheContext.cachedCount,
+          newCount,
+          totalCount: mergedTotalCount,
+          requestedCount: numResults,
+          isFull,
+        });
+      }
+
+      const recommendationsToCache = responseResult.recommendations;
       const hasMoviesToCache = recommendationsToCache.movies && recommendationsToCache.movies.length > 0;
       const hasSeriesToCache = recommendationsToCache.series && recommendationsToCache.series.length > 0;
 
-      // Cache all results (including Trakt users and homepage queries)
-      if ((hasMoviesToCache || hasSeriesToCache) && enableAiCache) {
-        await setAiCache(cacheKey, finalResult, numResults);
+      if (!partialCacheContext) {
+        // Cache all results (including Trakt users and homepage queries)
+        if ((hasMoviesToCache || hasSeriesToCache) && enableAiCache) {
+          const freshTotalCount = countRecommendationBuckets(responseResult.recommendations);
+          const isFull = freshTotalCount >= numResults;
+          await setAiCache(cacheKey, responseResult, numResults, isFull);
 
-        logger.debug("AI recommendations result cached", {
-          cacheKey,
-          duration: Date.now() - startTime,
-          query: searchQuery,
-          type,
-          numResults,
-        });
-      } else {
-        // Log the reason for not caching
-        let reason = "";
-        if (!(hasMoviesToCache || hasSeriesToCache)) {
-          reason = "Result was empty";
-        } else if (!enableAiCache) {
-          reason = "AI cache disabled in config";
+          logger.debug("AI recommendations result cached", {
+            cacheKey,
+            duration: Date.now() - startTime,
+            query: searchQuery,
+            type,
+            numResults,
+            isFull,
+          });
+        } else {
+          // Log the reason for not caching
+          let reason = "";
+          if (!(hasMoviesToCache || hasSeriesToCache)) {
+            reason = "Result was empty";
+          } else if (!enableAiCache) {
+            reason = "AI cache disabled in config";
+          }
+          logger.debug("AI recommendations not cached", {
+            reason,
+            duration: Date.now() - startTime,
+            query: searchQuery,
+            type,
+          });
         }
-        logger.debug("AI recommendations not cached", {
-          reason,
-          duration: Date.now() - startTime,
-          query: searchQuery,
-          type,
-        });
       }
 
       // Convert recommendations to Stremio meta objects
       const selectedRecommendations =
         type === "movie"
-          ? finalResult.recommendations.movies || []
-          : finalResult.recommendations.series || [];
+          ? responseResult.recommendations.movies || []
+          : responseResult.recommendations.series || [];
 
       logger.debug("Converting recommendations to meta objects", {
         recommendationsCount: selectedRecommendations.length,

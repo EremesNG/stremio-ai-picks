@@ -323,6 +323,17 @@ function startServer() {
                             query = parts[1].trim();
                         }
 
+                        // Strip @@minRating suffix from query if present
+                        const lastAtIndex = query.lastIndexOf('@@');
+                        if (lastAtIndex !== -1) {
+                            const potentialRating = query.substring(lastAtIndex + 2).trim();
+                            const isStrictNumericSuffix = /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(potentialRating);
+                            const ratingNum = isStrictNumericSuffix ? Number(potentialRating) : NaN;
+                            if (!isNaN(ratingNum) && isFinite(ratingNum) && ratingNum >= 0 && ratingNum <= 10) {
+                                query = query.substring(0, lastAtIndex);
+                            }
+                        }
+
                         const intent = determineIntentFromKeywords(query);
                         const id_prefix = `aipicks.home.${index}`;
                         const name = title;

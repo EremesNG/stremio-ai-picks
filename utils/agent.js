@@ -303,6 +303,10 @@ function applyTurnFilter(items, ctx = {}) {
   const collected = Array.isArray(ctx.collected) ? ctx.collected : [];
   const proposedTitles = Array.isArray(ctx.proposedTitles) ? ctx.proposedTitles : [];
   const filterWatched = ctx.filterWatched !== false;
+  const minTmdbRating =
+    typeof ctx.minTmdbRating === "number" && Number.isFinite(ctx.minTmdbRating)
+      ? ctx.minTmdbRating
+      : null;
   const requestedType = ctx.type;
   const collectedIdentitySet = new Set(
     collected.map((item) => getTurnPrimaryKey(item, requestedType)).filter(Boolean)
@@ -330,6 +334,7 @@ function applyTurnFilter(items, ctx = {}) {
   let droppedHistoryCount = 0;
   let droppedTypeMismatchCount = 0;
   let droppedNotFoundCount = 0;
+  let droppedLowRatingCount = 0;
   const seenThisTurnIdentitySet = new Set();
   const rejectedTitles = {
     watched: [],
@@ -338,6 +343,7 @@ function applyTurnFilter(items, ctx = {}) {
     duplicate: [],
     typeMismatch: [],
     notFound: [],
+    lowRating: [],
   };
 
   (Array.isArray(items) ? items : []).forEach((item) => {
@@ -369,11 +375,11 @@ function applyTurnFilter(items, ctx = {}) {
     const rejectionLabel =
       formatTurnTitleWithYear({ title: currentTitle, year: currentYear }) || currentTitle || null;
 
-    function recordRejection(bucketName) {
-      if (!rejectionLabel || !Array.isArray(rejectedTitles[bucketName])) {
+    function recordRejection(bucketName, label = rejectionLabel) {
+      if (!label || !Array.isArray(rejectedTitles[bucketName])) {
         return;
       }
-      rejectedTitles[bucketName].push(rejectionLabel);
+      rejectedTitles[bucketName].push(label);
     }
 
     addProposedTokens(proposedTitles, proposalTokens);
@@ -431,6 +437,25 @@ function applyTurnFilter(items, ctx = {}) {
       return;
     }
 
+    const itemTmdbRating =
+      typeof item?.tmdbRating === "number" && Number.isFinite(item.tmdbRating)
+        ? item.tmdbRating
+        : null;
+
+    if (
+      minTmdbRating !== null &&
+      itemTmdbRating !== null &&
+      itemTmdbRating < minTmdbRating
+    ) {
+      rejectedCount += 1;
+      droppedLowRatingCount += 1;
+      recordRejection(
+        "lowRating",
+        `lowRating: TMDB rating ${itemTmdbRating} below minimum ${minTmdbRating}`
+      );
+      return;
+    }
+
     accepted.push({
       ...item,
       type,
@@ -454,6 +479,7 @@ function applyTurnFilter(items, ctx = {}) {
     droppedHistoryCount,
     droppedTypeMismatchCount,
     droppedNotFoundCount,
+    droppedLowRatingCount,
     rejectedTitles,
     rejectedCount,
   };
@@ -546,6 +572,37 @@ function countToolFailures(parts) {
   }).length;
 }
 
+function countDiscoveryToolUsage(functionCalls) {
+  const counts = {
+    discoverCalls: 0,
+    trendingCalls: 0,
+    discoveryPagesRequested: 0,
+  };
+
+  if (!Array.isArray(functionCalls) || functionCalls.length === 0) {
+    return counts;
+  }
+
+  functionCalls.forEach((call) => {
+    const toolName = call?.name;
+    if (toolName !== "discover_content" && toolName !== "trending_content") {
+      return;
+    }
+
+    if (toolName === "discover_content") {
+      counts.discoverCalls += 1;
+    } else {
+      counts.trendingCalls += 1;
+    }
+
+    const page = parseStrictInteger(call?.args?.page);
+    const normalizedPage = Math.min(Math.max(page || 1, 1), 5);
+    counts.discoveryPagesRequested += normalizedPage;
+  });
+
+  return counts;
+}
+
 async function callGemini(chat, message, meta = {}) {
   // Keep the same retry policy as the old generateContent path: retry transient
   // 429/5xx failures, but let 400 INVALID_ARGUMENT surface immediately because
@@ -624,6 +681,8 @@ async function runAgentLoop(dependencies = {}) {
     traktAuth,
     traktUsername,
     traktAccessToken,
+    minTmdbRating = undefined,
+    preProposedTitles = [],
   } = dependencies;
 
   const filterWatched = requestedFilterWatched !== false;
@@ -656,6 +715,7 @@ async function runAgentLoop(dependencies = {}) {
         : Array.isArray(traktHistoryIdSet)
           ? traktHistoryIdSet.length
           : traktHistoryIdSet?.length,
+    preProposedCount: Array.isArray(preProposedTitles) ? preProposedTitles.length : 0,
     maxTurns,
     filterWatched,
   });
@@ -665,6 +725,7 @@ async function runAgentLoop(dependencies = {}) {
   let toolCalls = 0;
   let collected = [];
   let proposedTitles = [];
+  addProposedTitles(proposedTitles, preProposedTitles);
   let acceptedSoFar = [];
   let lastTurnRejectedTitles = {
     watched: [],
@@ -673,6 +734,7 @@ async function runAgentLoop(dependencies = {}) {
     duplicate: [],
     typeMismatch: [],
     notFound: [],
+    lowRating: [],
   };
   let droppedWatchedTotal = 0;
   let droppedNoIdTotal = 0;
@@ -681,6 +743,10 @@ async function runAgentLoop(dependencies = {}) {
   let droppedProposedTotal = 0;
   let droppedDuplicatesTotal = 0;
   let droppedRatedTotal = 0;
+  let droppedLowRatingTotal = 0;
+  let discoverCallsTotal = 0;
+  let trendingCallsTotal = 0;
+  let discoveryPagesRequestedTotal = 0;
 
   function logSummary(success, reason, recommendations) {
     const summary = {
@@ -696,6 +762,10 @@ async function runAgentLoop(dependencies = {}) {
       droppedProposed: droppedProposedTotal,
       droppedDuplicates: droppedDuplicatesTotal,
       droppedRated: droppedRatedTotal,
+      droppedLowRating: droppedLowRatingTotal,
+      discoverCalls: discoverCallsTotal,
+      trendingCalls: trendingCallsTotal,
+      discoveryPagesRequested: discoveryPagesRequestedTotal,
       durationMs: Date.now() - startTime,
       model: modelName,
     };
@@ -719,6 +789,10 @@ async function runAgentLoop(dependencies = {}) {
         droppedCollected: droppedCollectedTotal,
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
+        droppedLowRating: droppedLowRatingTotal,
+        discoverCalls: discoverCallsTotal,
+        trendingCalls: trendingCallsTotal,
+        discoveryPagesRequested: discoveryPagesRequestedTotal,
         elapsed: Date.now() - startTime,
       });
       logger.info("Agent loop complete", summary);
@@ -733,6 +807,10 @@ async function runAgentLoop(dependencies = {}) {
         droppedCollected: droppedCollectedTotal,
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
+        droppedLowRating: droppedLowRatingTotal,
+        discoverCalls: discoverCallsTotal,
+        trendingCalls: trendingCallsTotal,
+        discoveryPagesRequested: discoveryPagesRequestedTotal,
         elapsed: Date.now() - startTime,
       });
       logger.warn("Agent loop complete", summary);
@@ -759,6 +837,7 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
       discoveredGenres: dependencies.discoveredGenres,
       genreAnalysis: dependencies.genreAnalysis,
       favoritesContext: dependencies.favoritesContext,
+      minTmdbRating,
     };
   }
 
@@ -864,6 +943,9 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
     let nudgeReason = null;
     let violationsBeforeRetry = [];
     let violationsAfterRetry = [];
+    let discoverCalls = 0;
+    let trendingCalls = 0;
+    let discoveryPagesRequested = 0;
 
     function buildTurnResult({
       rawText = "",
@@ -886,6 +968,9 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
         nudgeReason,
         violationsBeforeRetry,
         violationsAfterRetry,
+        discoverCalls,
+        trendingCalls,
+        discoveryPagesRequested,
       };
     }
 
@@ -1082,6 +1167,7 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
           matchedType,
           matchedTmdbId,
           resolution: resolutionValue,
+          tmdbRating: selectedMatch?.tmdbRating ?? undefined,
         };
       });
     }
@@ -1249,6 +1335,13 @@ if (hasText) {
       }
 
       const currentToolRound = toolRoundsUsed;
+      const discoveryCounts = countDiscoveryToolUsage(functionCalls);
+      discoverCalls += discoveryCounts.discoverCalls;
+      trendingCalls += discoveryCounts.trendingCalls;
+      discoveryPagesRequested += discoveryCounts.discoveryPagesRequested;
+      discoverCallsTotal += discoveryCounts.discoverCalls;
+      trendingCallsTotal += discoveryCounts.trendingCalls;
+      discoveryPagesRequestedTotal += discoveryCounts.discoveryPagesRequested;
 
       toolCalls += functionCalls.length;
       functionCalls.forEach((call) => {
@@ -1420,6 +1513,7 @@ if (hasText) {
       traktWatchedIdSet,
       traktRatedIdSet,
       traktHistoryIdSet,
+      minTmdbRating,
     });
 
     collected.push(...turnFilter.accepted);
@@ -1438,6 +1532,7 @@ if (hasText) {
             duplicate: [],
             typeMismatch: [],
             notFound: [],
+            lowRating: [],
           };
     droppedNoIdTotal += 0;
     droppedMissingTitleTotal += 0;
@@ -1445,6 +1540,7 @@ if (hasText) {
     droppedProposedTotal += turnFilter.droppedProposedCount || 0;
     droppedWatchedTotal += turnFilter.droppedWatchedCount || 0;
     droppedRatedTotal += turnFilter.droppedRatedCount || 0;
+    droppedLowRatingTotal += turnFilter.droppedLowRatingCount || 0;
     droppedDuplicatesTotal +=
       (turnFilter.droppedCollectedCount || 0) + (turnFilter.droppedProposedCount || 0);
 
@@ -1469,6 +1565,10 @@ if (hasText) {
         : [],
       acceptedCount: turnFilter.accepted.length,
       rejectedCount: turnFilter.rejectedCount,
+      droppedLowRating: turnFilter.droppedLowRatingCount || 0,
+      discoverCalls: turnResult.discoverCalls || 0,
+      trendingCalls: turnResult.trendingCalls || 0,
+      discoveryPagesRequested: turnResult.discoveryPagesRequested || 0,
       rejectedBreakdown: {
         missingTmdb: 0,
         missingTitle: 0,
@@ -1479,6 +1579,7 @@ if (hasText) {
         history: turnFilter.droppedHistoryCount || 0,
         typeMismatch: turnFilter.droppedTypeMismatchCount || 0,
         notFound: turnFilter.droppedNotFoundCount || 0,
+        lowRating: turnFilter.droppedLowRatingCount || 0,
       },
       gap,
     });
@@ -1507,6 +1608,7 @@ if (hasText) {
       droppedCollected: droppedCollectedTotal,
       droppedProposed: droppedProposedTotal,
       droppedRated: droppedRatedTotal,
+      droppedLowRating: droppedLowRatingTotal,
     });
   }
 
