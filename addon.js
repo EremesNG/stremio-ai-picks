@@ -19,6 +19,11 @@ const {
   deleteAiCache,
   purgeExpiredAiCache,
   clearAiCache: clearAiCacheDb,
+  getTraktCache,
+  setTraktCache,
+  deleteTraktCache,
+  purgeExpiredTraktCache,
+  clearTraktCache: clearTraktCacheDb,
 } = require("./database");
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
 const TMDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for TMDB
@@ -29,7 +34,6 @@ const DEFAULT_RPDB_KEY = process.env.RPDB_API_KEY;
 const DEFAULT_FANART_KEY = process.env.FANART_API_KEY;
 const ENABLE_LOGGING = process.env.ENABLE_LOGGING === "true" || false;
 const TRAKT_API_BASE = "https://api.trakt.tv";
-const TRAKT_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const TRAKT_RAW_DATA_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DEFAULT_TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID;
 const MAX_AI_RECOMMENDATIONS = 30;
@@ -255,6 +259,7 @@ setInterval(() => {
     tmdbDetailsCache: tmdbDetailsStats,
     tmdbDiscoverCache: tmdbDiscoverStats,
     aiCache: { backend: "turso", inMemory: false },
+    traktCache: { backend: "turso", inMemory: false },
     rpdbCache: rpdbStats,
   });
 }, 60 * 60 * 1000);
@@ -265,11 +270,6 @@ const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 const traktRawDataCache = new SimpleLRUCache({
   max: 1000,
   ttl: TRAKT_RAW_DATA_CACHE_DURATION,
-});
-
-const traktCache = new SimpleLRUCache({
-  max: 1000,
-  ttl: TRAKT_CACHE_DURATION,
 });
 
 // In-flight Trakt fetch locks to prevent cache stampedes
@@ -743,7 +743,7 @@ async function fetchTraktWatchedAndRated(
   clientId,
   accessToken,
   type = "movies",
-  _config = null
+  configData = null
 ) {
   logger.agent('TRAKT_FETCH_START', { mediaType: type, hasClientId: !!clientId, hasAccessToken: !!accessToken });
 
@@ -764,8 +764,9 @@ async function fetchTraktWatchedAndRated(
     return null;
   }
 
+  const traktUsername = configData?.traktUsername || configData?.TraktUsername || '';
   const rawCacheKey = `trakt_raw_${accessToken}_${type}`;
-  const processedCacheKey = `trakt_${accessToken}_${type}`;
+  const processedCacheKey = `trakt_${traktUsername}_${type}`;
   const fetchLockKey = processedCacheKey;
 
   if (traktFetchLocks.has(fetchLockKey)) {
@@ -778,12 +779,15 @@ async function fetchTraktWatchedAndRated(
 
   const fetchPromise = (async () => {
     // Check if we have processed data in cache
-    if (traktCache.has(processedCacheKey)) {
-      const cached = traktCache.get(processedCacheKey);
+    const tursoTraktCache = await getTraktCache(processedCacheKey);
+    if (tursoTraktCache) {
+      const cached = tursoTraktCache;
       logger.agent('TRAKT_CACHE_HIT', { cacheKey: processedCacheKey, watchedCount: cached?.data?.watched?.length, ratedCount: cached?.data?.rated?.length });
       logger.info("Trakt processed cache hit", {
         cacheKey: processedCacheKey,
         type,
+        watchedCount: cached.data?.watched?.length || 0,
+        ratedCount: cached.data?.rated?.length || 0,
         cachedAt: new Date(cached.timestamp).toISOString(),
         age: `${Math.round((Date.now() - cached.timestamp) / 1000)}s`,
       });
@@ -937,10 +941,7 @@ async function fetchTraktWatchedAndRated(
     };
 
     // Cache the processed result
-    traktCache.set(processedCacheKey, {
-      timestamp: Date.now(),
-      data: result,
-    });
+    await setTraktCache(processedCacheKey, result);
 
     logger.info("Trakt data processing and caching completed", {
       processingTimeMs: processingTime,
@@ -2491,10 +2492,13 @@ function clearFanartCache() {
 }
 
 function clearTraktCache() {
-  const size = traktCache.size;
-  traktCache.clear();
-  logger.info("Trakt cache cleared", { previousSize: size });
-  return { cleared: true, previousSize: size };
+  clearTraktCacheDb().catch((error) => {
+    logger.error("Failed to clear Turso Trakt cache", {
+      error: error.message,
+    });
+  });
+  logger.info("Trakt cache clear requested", { backend: "turso" });
+  return { cleared: true, previousSize: null, pending: true, backend: "turso" };
 }
 
 function clearTraktRawDataCache() {
@@ -2559,10 +2563,11 @@ function getCacheStats() {
         ((fanartCache.size / fanartCache.max) * 100).toFixed(2) + "%",
     },
     traktCache: {
-      size: traktCache.size,
-      maxSize: traktCache.max,
-      usagePercentage:
-        ((traktCache.size / traktCache.max) * 100).toFixed(2) + "%",
+      backend: "turso",
+      inMemory: false,
+      size: null,
+      maxSize: null,
+      usagePercentage: null,
     },
     traktRawDataCache: {
       size: traktRawDataCache.size,
@@ -2595,7 +2600,6 @@ function serializeAllCaches() {
     tmdbDiscoverCache: tmdbDiscoverCache.serialize(),
     rpdbCache: rpdbCache.serialize(),
     fanartCache: fanartCache.serialize(),
-    traktCache: traktCache.serialize(),
     traktRawDataCache: traktRawDataCache.serialize(),
     queryAnalysisCache: queryAnalysisCache.serialize(),
     similarContentCache: similarContentCache.serialize(),
@@ -2631,10 +2635,6 @@ function deserializeAllCaches(data) {
 
   if (data.fanartCache) {
     results.fanartCache = fanartCache.deserialize(data.fanartCache);
-  }
-
-  if (data.traktCache) {
-    results.traktCache = traktCache.deserialize(data.traktCache);
   }
 
   if (data.traktRawDataCache) {
@@ -3628,10 +3628,10 @@ const catalogHandler = async function (args, req) {
       fetchTraktFavorites,
       tmdbCache,
       tmdbDetailsCache,
-      traktCache,
+      traktCache: null,
       traktRawDataCache,
-      favoritesCache: traktCache,
-      favoritesCacheTtlMs: TRAKT_CACHE_DURATION,
+      favoritesCache: null,
+      favoritesCacheTtlMs: null,
       logger,
       toolDeclarations,
     };

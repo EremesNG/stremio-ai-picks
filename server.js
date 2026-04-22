@@ -878,8 +878,13 @@ function startServer() {
         routePath + "cache/clear/trakt",
         validateAdminToken,
         (req, res) => {
-          const { clearTraktCache } = require("./addon");
-          res.json(clearTraktCache());
+          try {
+            const { clearTraktCache } = require("./addon");
+            const result = clearTraktCache();
+            res.json(result);
+          } catch (error) {
+            res.status(500).json({ error: "Internal server error", message: error.message });
+          }
         }
       );
 

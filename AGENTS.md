@@ -47,7 +47,7 @@ Env is loaded via `dotenv` (gracefully skipped if `.env` is absent).
 ## Architecture Notes
 
 - **Config encryption**: User configuration is AES-256-CBC encrypted and passed as a URL path segment. `utils/crypto.js` handles encrypt/decrypt.
-- **Cache persistence**: AI recommendation cache is persisted in Turso (LibSQL) with 24h TTL — survives serverless cold starts. All other caches (TMDB, RPDB, Fanart, Trakt, etc.) remain in-memory `SimpleLRUCache` and reset on process restart. `serializeAllCaches`/`deserializeAllCaches` are exported from `addon.js` but never called.
+- **Cache persistence**: AI recommendation cache and Trakt processed data cache are persisted in Turso (LibSQL) with 24h TTL — survive serverless cold starts. All other caches (TMDB, RPDB, Fanart, Trakt raw data, etc.) remain in-memory `SimpleLRUCache` and reset on process restart. `serializeAllCaches`/`deserializeAllCaches` are exported from `addon.js` but never called.
 - **AI cache scope**: All catalog responses are cached — including Trakt users (keyed by username) and homepage queries. Cache key format: `{query}_{type}_{traktIdentity}`. The `enableAiCache` config flag (default: true) gates both read and write.
 - **SQLite**: `trakt_tokens.db` stores Trakt OAuth tokens. Created automatically by `database.js`. Gitignored.
 - **Trakt OAuth**: Full OAuth callback flow implemented in `server.js` (authorization URL → callback → token exchange → DB storage).

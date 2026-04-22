@@ -7,6 +7,7 @@ const db = createClient({
 });
 
 const AI_CACHE_TTL = 24 * 60 * 60 * 1000;
+const TRAKT_CACHE_TTL = 24 * 60 * 60 * 1000;
 
 async function initDb() {
   try {
@@ -14,6 +15,7 @@ async function initDb() {
     await db.execute(`CREATE TRIGGER IF NOT EXISTS update_tokens_updated_at AFTER UPDATE ON tokens FOR EACH ROW BEGIN UPDATE tokens SET updated_at = CURRENT_TIMESTAMP WHERE trakt_username = OLD.trakt_username; END;`);
     await db.execute(`CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`);
     await db.execute(`CREATE TABLE IF NOT EXISTS ai_cache (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL, config_num_results INTEGER NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS trakt_cache (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`);
     await db.execute({ sql: `INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)`, args: ['recommendations_served', 0] });
   } catch (error) {
     logger.error("Failed to initialize database", { error: error.message, stack: error.stack });
@@ -147,4 +149,73 @@ async function clearAiCache() {
   }
 }
 
-module.exports = { initDb, storeTokens, getTokens, getStatValue, incrementStat, setStatValue, getAiCache, setAiCache, deleteAiCache, purgeExpiredAiCache, clearAiCache };
+async function getTraktCache(cacheKey) {
+  try {
+    const now = Date.now();
+    const result = await db.execute({
+      sql: 'SELECT data, created_at FROM trakt_cache WHERE cache_key = ? AND expires_at > ?',
+      args: [cacheKey, now],
+    });
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      data: JSON.parse(row.data),
+      timestamp: Number(row.created_at),
+    };
+  } catch (error) {
+    logger.error('Failed to get Trakt cache entry', { cacheKey, error: error.message });
+    return null;
+  }
+}
+
+async function setTraktCache(cacheKey, data) {
+  try {
+    const createdAt = Date.now();
+    const expiresAt = createdAt + TRAKT_CACHE_TTL;
+
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO trakt_cache (cache_key, data, created_at, expires_at) VALUES (?, ?, ?, ?)',
+      args: [cacheKey, JSON.stringify(data), createdAt, expiresAt],
+    });
+  } catch (error) {
+    logger.error('Failed to set Trakt cache entry', { cacheKey, error: error.message });
+  }
+}
+
+async function deleteTraktCache(cacheKey) {
+  try {
+    await db.execute({
+      sql: 'DELETE FROM trakt_cache WHERE cache_key = ?',
+      args: [cacheKey],
+    });
+  } catch (error) {
+    logger.error('Failed to delete Trakt cache entry', { cacheKey, error: error.message });
+  }
+}
+
+async function purgeExpiredTraktCache() {
+  try {
+    const result = await db.execute({
+      sql: 'DELETE FROM trakt_cache WHERE expires_at <= ?',
+      args: [Date.now()],
+    });
+    return Number(result.rowsAffected ?? 0);
+  } catch (error) {
+    logger.error('Failed to purge expired Trakt cache entries', { error: error.message });
+    return 0;
+  }
+}
+
+async function clearTraktCache() {
+  try {
+    await db.execute({ sql: 'DELETE FROM trakt_cache', args: [] });
+  } catch (error) {
+    logger.error('Failed to clear Trakt cache', { error: error.message });
+  }
+}
+
+module.exports = { initDb, storeTokens, getTokens, getStatValue, incrementStat, setStatValue, getAiCache, setAiCache, deleteAiCache, purgeExpiredAiCache, clearAiCache, getTraktCache, setTraktCache, deleteTraktCache, purgeExpiredTraktCache, clearTraktCache };
