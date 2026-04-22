@@ -572,6 +572,37 @@ function countToolFailures(parts) {
   }).length;
 }
 
+function countDiscoveryToolUsage(functionCalls) {
+  const counts = {
+    discoverCalls: 0,
+    trendingCalls: 0,
+    discoveryPagesRequested: 0,
+  };
+
+  if (!Array.isArray(functionCalls) || functionCalls.length === 0) {
+    return counts;
+  }
+
+  functionCalls.forEach((call) => {
+    const toolName = call?.name;
+    if (toolName !== "discover_content" && toolName !== "trending_content") {
+      return;
+    }
+
+    if (toolName === "discover_content") {
+      counts.discoverCalls += 1;
+    } else {
+      counts.trendingCalls += 1;
+    }
+
+    const page = parseStrictInteger(call?.args?.page);
+    const normalizedPage = Math.min(Math.max(page || 1, 1), 5);
+    counts.discoveryPagesRequested += normalizedPage;
+  });
+
+  return counts;
+}
+
 async function callGemini(chat, message, meta = {}) {
   // Keep the same retry policy as the old generateContent path: retry transient
   // 429/5xx failures, but let 400 INVALID_ARGUMENT surface immediately because
@@ -710,6 +741,9 @@ async function runAgentLoop(dependencies = {}) {
   let droppedDuplicatesTotal = 0;
   let droppedRatedTotal = 0;
   let droppedLowRatingTotal = 0;
+  let discoverCallsTotal = 0;
+  let trendingCallsTotal = 0;
+  let discoveryPagesRequestedTotal = 0;
 
   function logSummary(success, reason, recommendations) {
     const summary = {
@@ -726,6 +760,9 @@ async function runAgentLoop(dependencies = {}) {
       droppedDuplicates: droppedDuplicatesTotal,
       droppedRated: droppedRatedTotal,
       droppedLowRating: droppedLowRatingTotal,
+      discoverCalls: discoverCallsTotal,
+      trendingCalls: trendingCallsTotal,
+      discoveryPagesRequested: discoveryPagesRequestedTotal,
       durationMs: Date.now() - startTime,
       model: modelName,
     };
@@ -750,6 +787,9 @@ async function runAgentLoop(dependencies = {}) {
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
         droppedLowRating: droppedLowRatingTotal,
+        discoverCalls: discoverCallsTotal,
+        trendingCalls: trendingCallsTotal,
+        discoveryPagesRequested: discoveryPagesRequestedTotal,
         elapsed: Date.now() - startTime,
       });
       logger.info("Agent loop complete", summary);
@@ -765,6 +805,9 @@ async function runAgentLoop(dependencies = {}) {
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
         droppedLowRating: droppedLowRatingTotal,
+        discoverCalls: discoverCallsTotal,
+        trendingCalls: trendingCallsTotal,
+        discoveryPagesRequested: discoveryPagesRequestedTotal,
         elapsed: Date.now() - startTime,
       });
       logger.warn("Agent loop complete", summary);
@@ -897,6 +940,9 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
     let nudgeReason = null;
     let violationsBeforeRetry = [];
     let violationsAfterRetry = [];
+    let discoverCalls = 0;
+    let trendingCalls = 0;
+    let discoveryPagesRequested = 0;
 
     function buildTurnResult({
       rawText = "",
@@ -919,6 +965,9 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
         nudgeReason,
         violationsBeforeRetry,
         violationsAfterRetry,
+        discoverCalls,
+        trendingCalls,
+        discoveryPagesRequested,
       };
     }
 
@@ -1283,6 +1332,13 @@ if (hasText) {
       }
 
       const currentToolRound = toolRoundsUsed;
+      const discoveryCounts = countDiscoveryToolUsage(functionCalls);
+      discoverCalls += discoveryCounts.discoverCalls;
+      trendingCalls += discoveryCounts.trendingCalls;
+      discoveryPagesRequested += discoveryCounts.discoveryPagesRequested;
+      discoverCallsTotal += discoveryCounts.discoverCalls;
+      trendingCallsTotal += discoveryCounts.trendingCalls;
+      discoveryPagesRequestedTotal += discoveryCounts.discoveryPagesRequested;
 
       toolCalls += functionCalls.length;
       functionCalls.forEach((call) => {
@@ -1507,6 +1563,9 @@ if (hasText) {
       acceptedCount: turnFilter.accepted.length,
       rejectedCount: turnFilter.rejectedCount,
       droppedLowRating: turnFilter.droppedLowRatingCount || 0,
+      discoverCalls: turnResult.discoverCalls || 0,
+      trendingCalls: turnResult.trendingCalls || 0,
+      discoveryPagesRequested: turnResult.discoveryPagesRequested || 0,
       rejectedBreakdown: {
         missingTmdb: 0,
         missingTitle: 0,

@@ -35,9 +35,10 @@ function buildAgentSystemPrompt(ctx = {}) {
     `You are a ${type} recommendation agent.`,
     "Act as a pure candidate generator for the current turn.",
     `Produce exactly ${requestCount} new candidate recommendations and return only a JSON array.`,
-    "A single tool is available: get_user_favorites. Use it when you need to check the user's favorites.",
+    "Tools available: get_user_favorites, discover_content, trending_content. Use get_user_favorites when you need to check the user's favorites.",
+    "Strategy: start with discover_content filters that match the query. If rejections rise (especially watched/duplicate), you MUST change discover filters significantly (different genre combo, year range, sort, keywords) and MUST NOT repeat the same filter set. If discover is exhausted, use trending_content; if trending is exhausted, use pages 2-5 from prior queries. Combine tool results with your own knowledge and output only { type, title, year }.",
     "The orchestrator handles TMDB disambiguation and will resolve title+year+type to a TMDB identity. Do not emit tmdb_id — the orchestrator owns that resolution.",
-    "Do not re-propose any title already accepted or already proposed.",
+    "Do not re-propose any title already accepted or already proposed. The orchestrator tracks every proposed title across turns and auto-rejects duplicates, so duplicates waste your turn budget.",
     "Do not include markdown, prose, code fences, numbered steps, or commentary.",
     ...buildAgentOutputContract(requestCount),
   ].join("\n");
@@ -251,6 +252,24 @@ function buildTurnMessage(ctx = {}) {
     lines.push("- none");
   }
 
+  const duplicateCount = toArray(rejectedBuckets.duplicate).length;
+  const watchedCount = toArray(rejectedBuckets.watched).length;
+  const proposedCount = toArray(ctx.proposedTitles).length;
+  const largeRemainingGap =
+    remainingGap >= Math.max(4, Math.ceil((numResults || 0) * 0.4));
+
+  if (duplicateCount > 0) {
+    lines.push("Many of your proposals were duplicates. You MUST propose entirely new titles. If using discover_content, change your filters significantly (different genres, years, sort order, or keywords).");
+  }
+
+  if (watchedCount > 0) {
+    lines.push("Many proposals were already watched by the user. Try less mainstream or more niche content. Consider using different discover filters or trending_content for fresh options.");
+  }
+
+  if (largeRemainingGap && proposedCount >= Math.max(numResults || 0, 8)) {
+    lines.push("Gap is still large after multiple rounds. Consider using trending_content or discover_content with completely different parameters to find fresh candidates.");
+  }
+
   if (discoveredGenres) {
     lines.push(`Discovered genres: ${discoveredGenres}`);
   }
@@ -264,7 +283,8 @@ function buildTurnMessage(ctx = {}) {
   }
 
   lines.push(
-    "A single tool is available: get_user_favorites. Use it when you need to check the user's favorites.",
+    "Tools available: get_user_favorites, discover_content, trending_content. Use get_user_favorites when you need to check the user's favorites.",
+    "Use discover_content for filter-driven queries and trending_content for what is popular/trending/highly rated; each discover_content call should use a meaningfully different filter combination.",
     "The orchestrator resolves TMDB identity from title+year+type; do not emit tmdb_id or call TMDB yourself.",
     ...buildAgentOutputContract(remainingGap),
     "Use only new candidates that are not already in collected or proposed titles.",

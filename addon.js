@@ -3628,6 +3628,8 @@ const catalogHandler = async function (args, req) {
       type,
       searchTMDB: agentSearchTMDB,
       tmdbApiKey: tmdbKey,
+      language,
+      includeAdult,
       traktUsername,
       traktAccessToken,
       traktClientId,
