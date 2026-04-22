@@ -47,7 +47,8 @@ Env is loaded via `dotenv` (gracefully skipped if `.env` is absent).
 ## Architecture Notes
 
 - **Config encryption**: User configuration is AES-256-CBC encrypted and passed as a URL path segment. `utils/crypto.js` handles encrypt/decrypt.
-- **Cache persistence**: LRU caches are serialized to gzip files in `cache_data/` every hour and on graceful shutdown (`SIGTERM`/`SIGINT`/`SIGHUP`). Restored on startup.
+- **Cache persistence**: AI recommendation cache and Trakt processed data cache are persisted in Turso (LibSQL) with 24h TTL — survive serverless cold starts. All other caches (TMDB, RPDB, Fanart, Trakt raw data, etc.) remain in-memory `SimpleLRUCache` and reset on process restart. `serializeAllCaches`/`deserializeAllCaches` are exported from `addon.js` but never called.
+- **AI cache scope**: All catalog responses are cached — including Trakt users (keyed by username) and homepage queries. Cache key format: `{query}_{type}_{traktIdentity}`. The `enableAiCache` config flag (default: true) gates both read and write.
 - **SQLite**: `trakt_tokens.db` stores Trakt OAuth tokens. Created automatically by `database.js`. Gitignored.
 - **Trakt OAuth**: Full OAuth callback flow implemented in `server.js` (authorization URL → callback → token exchange → DB storage).
 - **Admin endpoints**: Cache management routes protected by `ADMIN_TOKEN` query parameter.
@@ -99,7 +100,7 @@ The Gemini recommendation agent uses an orchestrator-turn loop. Key facts:
 
 - **Vercel** (primary): Serverless deployment with Turso (LibSQL) for token storage. Environment variables configured in Vercel dashboard.
 - **Docker** (alternative): `Dockerfile` uses `node:23` with corepack + pnpm, exposes port `3000`, sets `NODE_ENV=production`.
-- **Gitignored artifacts**: `node_modules/`, `.env`, `trakt_tokens.db`, `cache_data/`.
+- **Gitignored artifacts**: `node_modules/`, `.env`, `trakt_tokens.db`.
 
 ## Conventions
 

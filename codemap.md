@@ -19,14 +19,14 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 4. `addon.js` handlers (`catalogHandler`, `metaHandler`, `streamHandler`) process the request
 5. Handlers invoke `runAgentLoop` (from `utils/agent.js`) with Gemini AI for intelligent query interpretation
 6. Agent loop uses function-calling tools (`utils/agent-tools.js`): `get_user_favorites` is the sole model-visible tool; TMDB resolution is orchestrator-owned and happens after the model emits its candidate array
-7. Results cached in custom `SimpleLRUCache`, persisted to gzip files in `cache_data/` every hour and on graceful shutdown
+7. Results cached in Turso (LibSQL) with 24h TTL — persists across serverless cold starts. Caches all catalog responses including Trakt users (keyed by username) and homepage queries.
 8. Response returned as Stremio-compatible JSON
 
 ### Config Encryption & Persistence
 - User configuration (API keys, preferences) is AES-256-CBC encrypted and passed as URL path segment
 - `utils/crypto.js` handles encrypt/decrypt operations
 - Trakt OAuth tokens stored in `trakt_tokens.db` (SQLite, gitignored, auto-created)
-- Cache data serialized to `cache_data/` directory (gzip format)
+- AI recommendation cache and Trakt processed data cache persisted in Turso (LibSQL); other caches in-memory only
 
 ### Agent Loop Design
 - Orchestrator-turn Gemini agent with internal tool rounds inside each turn
@@ -42,9 +42,8 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 - `TURN_RESULT` logging extended with `contractRetryUsed`, `violationsBeforeRetry`, and `violationsAfterRetry` for structured telemetry
 
 ### Caching Strategy
-- Custom `SimpleLRUCache` in `addon.js` minimizes redundant API calls
-- Periodic gzip serialization to `cache_data/` (hourly + graceful shutdown)
-- Restored on startup from persisted files
+- AI recommendations and Trakt processed data cached in Turso (LibSQL) with 24h TTL — survive serverless cold starts
+- Other caches use custom `SimpleLRUCache` in `addon.js` (in-memory, 7 days TTL for TMDB/RPDB/Fanart/Trakt raw data)
 - Admin endpoints (`/cache/save`, `/stats/*`) protected by `ADMIN_TOKEN` query parameter
 
 ### HomepageQuery Serialization
@@ -64,7 +63,7 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 |------|------|----------------------|
 | **server.js** | Express HTTP server, request routing, Trakt OAuth flow, static file serving, admin cache management, graceful shutdown | Middleware chain (logging, platform detection, rate limiting); routes: `/*` (addon), `/oauth/callback`, `/api/getConfig/:configId`, `/api/decrypt-config`, `/cache/save`, `/stats/*`, `/oauth/refresh` |
 | **addon.js** | Core Stremio addon logic, catalog/meta/stream handlers, AI agent integration, LRU caching, config parsing | `addonInterface`, `catalogHandler`, `metaHandler`, `streamHandler`, `SimpleLRUCache`, `purgeEmptyAiCacheEntries`; reads `DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"`, `FilterWatched`, `MaxTurns`, `HomepageQuery` |
-| **database.js** | SQLite token storage for Trakt OAuth tokens | `initDb`, `storeTokens`, `getTokens`; singleton DB connection, prepared statements, auto-created `trakt_tokens.db` |
+| **database.js** | Trakt OAuth token storage (SQLite), AI recommendation cache (Turso/LibSQL), and Trakt processed data cache (Turso/LibSQL) | `initDb`, `storeTokens`, `getTokens`, `cacheAiResult`, `getAiCacheResult`, `getTraktCache`, `setTraktCache`, `deleteTraktCache`, `purgeExpiredTraktCache`, `clearTraktCache`; singleton DB connections, prepared statements, auto-created `trakt_tokens.db` |
 | **Dockerfile** | Container build specification | Node 23 base, corepack + pnpm, port 3000, NODE_ENV=production |
 | **package.json** | Dependency manifest, npm scripts | Entry: `server.js`; key deps: `@google/generative-ai`, `better-sqlite3`, `stremio-addon-sdk`, `express`, `better-lru-cache` |
 
@@ -84,11 +83,11 @@ AI-powered Stremio addon that delivers personalized movie and series recommendat
 - Finalization guard + partial fallback ensures graceful degradation on timeout
 - Tradeoff: Multi-turn reasoning increases latency; mitigated by turn limits (MaxTurns 4–12) and the internal tool-round cap
 
-### 3. Custom SimpleLRUCache with Persistent Gzip Serialization
-- In-memory LRU cache for catalog/meta/stream results
-- Periodic gzip serialization to `cache_data/` (hourly + graceful shutdown)
-- Restored on startup to warm cache across restarts
-- Tradeoff: Disk I/O overhead; benefit: reduced API calls and faster cold starts
+### 3. Turso-Backed AI & Trakt Cache with SimpleLRUCache for Other Data
+- AI recommendation cache and Trakt processed data cache persisted in Turso (LibSQL) with 24h TTL — survive serverless cold starts
+- Other caches (TMDB, RPDB, Fanart, Trakt raw data) use in-memory `SimpleLRUCache` with TTL-based expiration
+- Non-persistent caches reset on process restart
+- Tradeoff: Turso persistence adds external dependency; benefit: recommendations and Trakt data survive cold starts. Other caches remain simple in-memory for reduced latency
 
 ### 4. Trakt.tv OAuth Token Storage in SQLite
 - Tokens stored in `trakt_tokens.db` with `updated_at` trigger
