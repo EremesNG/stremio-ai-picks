@@ -1051,6 +1051,28 @@
         }
       }
 
+      async function executeRecaptchaAction(action) {
+        try {
+          return await new Promise((resolve) => {
+            if (typeof grecaptcha === "undefined") {
+              resolve(null);
+              return;
+            }
+
+            grecaptcha.ready(async () => {
+              try {
+                const token = await grecaptcha.execute("6LcUAMAsAAAAAM2vbAOcZK4VqPJ9xmBSYTi5VSUa", { action });
+                resolve(token || null);
+              } catch (error) {
+                resolve(null);
+              }
+            });
+          });
+        } catch (error) {
+          return null;
+        }
+      }
+
       window.getAddonUrl = async function () {
         const geminiKey = document.getElementById("geminiKey").value.trim();
         const tmdbKey = document.getElementById("tmdbKey").value.trim();
@@ -1066,7 +1088,13 @@
 
         try {
           setLoading(true);
-          const isValid = await validateApiKeys(geminiKey, tmdbKey);
+          const recaptchaToken = await executeRecaptchaAction("install_addon");
+          if (!recaptchaToken) {
+            showError("Security verification failed. Please refresh the page and try again.");
+            return null;
+          }
+
+          const isValid = await validateApiKeys(geminiKey, tmdbKey, recaptchaToken);
           if (!isValid) return null;
           clearError();
 
@@ -1203,7 +1231,7 @@
         }
       }
 
-      async function validateApiKeys(geminiKey, tmdbKey) {
+      async function validateApiKeys(geminiKey, tmdbKey, recaptchaToken) {
         const errorDiv = document.getElementById("error");
         const traktAccessToken = document.getElementById("traktAccessToken").value.trim();
         const traktRefreshToken = document.getElementById("traktRefreshToken").value.trim();
@@ -1215,16 +1243,27 @@
              headers: {
                "Content-Type": "application/json",
              },
-             body: JSON.stringify({
-               GeminiApiKey: geminiKey,
-               TmdbApiKey: tmdbKey,
-               FanartApiKey: fanartKey,
-               TraktAccessToken: traktAccessToken,
-               TraktRefreshToken: traktRefreshToken,
-             }),
-           });
+              body: JSON.stringify({
+                GeminiApiKey: geminiKey,
+                TmdbApiKey: tmdbKey,
+                FanartApiKey: fanartKey,
+                TraktAccessToken: traktAccessToken,
+                TraktRefreshToken: traktRefreshToken,
+                recaptchaToken: recaptchaToken,
+              }),
+            });
 
           const result = await response.json();
+
+          if (!response.ok) {
+            errorDiv.classList.remove("hidden");
+            if (result && result.error) {
+              errorDiv.textContent = result.error;
+            } else {
+              errorDiv.textContent = "Validation request failed. Please try again.";
+            }
+            return false;
+          }
 
           if (!result.gemini || !result.tmdb) {
             errorDiv.classList.remove("hidden");
@@ -1600,25 +1639,7 @@
             return;
           }
 
-          let recaptchaToken;
-          try {
-            recaptchaToken = await new Promise((resolve) => {
-              if (typeof grecaptcha === "undefined") {
-                resolve(null);
-                return;
-              }
-              grecaptcha.ready(async () => {
-                try {
-                  const token = await grecaptcha.execute("6LcUAMAsAAAAAM2vbAOcZK4VqPJ9xmBSYTi5VSUa", { action: "submit_issue" });
-                  resolve(token);
-                } catch (error) {
-                  resolve(null);
-                }
-              });
-            });
-          } catch (error) {
-            recaptchaToken = null;
-          }
+          const recaptchaToken = await executeRecaptchaAction("submit_issue");
 
           const formData = {
             feedbackType: feedbackType,

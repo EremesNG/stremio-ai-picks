@@ -27,7 +27,7 @@ const {
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const logger = require("./utils/logger");
-const { handleIssueSubmission } = require("./utils/issueHandler");
+const { handleIssueSubmission, verifyRecaptcha } = require("./utils/issueHandler");
 const {
   encryptConfig,
   decryptConfig,
@@ -1274,7 +1274,23 @@ app.post("/validate", express.json(), async (req, res) => {
       TraktAccessToken,
       FanartApiKey,
       traktUsername,
+      recaptchaToken,
     } = req.body;
+
+    if (process.env.RECAPTCHA_SECRET_KEY) {
+      if (!recaptchaToken) {
+        return res.status(400).json({
+          error: "Security verification is required. Please refresh and try again.",
+        });
+      }
+
+      const isRecaptchaValid = await verifyRecaptcha(recaptchaToken, "install_addon");
+      if (!isRecaptchaValid) {
+        return res.status(400).json({
+          error: "Security verification failed. Please try again.",
+        });
+      }
+    }
     
     const validationResults = {
       gemini: false,
