@@ -303,6 +303,10 @@ function applyTurnFilter(items, ctx = {}) {
   const collected = Array.isArray(ctx.collected) ? ctx.collected : [];
   const proposedTitles = Array.isArray(ctx.proposedTitles) ? ctx.proposedTitles : [];
   const filterWatched = ctx.filterWatched !== false;
+  const minTmdbRating =
+    typeof ctx.minTmdbRating === "number" && Number.isFinite(ctx.minTmdbRating)
+      ? ctx.minTmdbRating
+      : null;
   const requestedType = ctx.type;
   const collectedIdentitySet = new Set(
     collected.map((item) => getTurnPrimaryKey(item, requestedType)).filter(Boolean)
@@ -330,6 +334,7 @@ function applyTurnFilter(items, ctx = {}) {
   let droppedHistoryCount = 0;
   let droppedTypeMismatchCount = 0;
   let droppedNotFoundCount = 0;
+  let droppedLowRatingCount = 0;
   const seenThisTurnIdentitySet = new Set();
   const rejectedTitles = {
     watched: [],
@@ -338,6 +343,7 @@ function applyTurnFilter(items, ctx = {}) {
     duplicate: [],
     typeMismatch: [],
     notFound: [],
+    lowRating: [],
   };
 
   (Array.isArray(items) ? items : []).forEach((item) => {
@@ -369,11 +375,11 @@ function applyTurnFilter(items, ctx = {}) {
     const rejectionLabel =
       formatTurnTitleWithYear({ title: currentTitle, year: currentYear }) || currentTitle || null;
 
-    function recordRejection(bucketName) {
-      if (!rejectionLabel || !Array.isArray(rejectedTitles[bucketName])) {
+    function recordRejection(bucketName, label = rejectionLabel) {
+      if (!label || !Array.isArray(rejectedTitles[bucketName])) {
         return;
       }
-      rejectedTitles[bucketName].push(rejectionLabel);
+      rejectedTitles[bucketName].push(label);
     }
 
     addProposedTokens(proposedTitles, proposalTokens);
@@ -431,6 +437,25 @@ function applyTurnFilter(items, ctx = {}) {
       return;
     }
 
+    const itemTmdbRating =
+      typeof item?.tmdbRating === "number" && Number.isFinite(item.tmdbRating)
+        ? item.tmdbRating
+        : null;
+
+    if (
+      minTmdbRating !== null &&
+      itemTmdbRating !== null &&
+      itemTmdbRating < minTmdbRating
+    ) {
+      rejectedCount += 1;
+      droppedLowRatingCount += 1;
+      recordRejection(
+        "lowRating",
+        `lowRating: TMDB rating ${itemTmdbRating} below minimum ${minTmdbRating}`
+      );
+      return;
+    }
+
     accepted.push({
       ...item,
       type,
@@ -454,6 +479,7 @@ function applyTurnFilter(items, ctx = {}) {
     droppedHistoryCount,
     droppedTypeMismatchCount,
     droppedNotFoundCount,
+    droppedLowRatingCount,
     rejectedTitles,
     rejectedCount,
   };
@@ -624,6 +650,7 @@ async function runAgentLoop(dependencies = {}) {
     traktAuth,
     traktUsername,
     traktAccessToken,
+    minTmdbRating = undefined,
   } = dependencies;
 
   const filterWatched = requestedFilterWatched !== false;
@@ -673,6 +700,7 @@ async function runAgentLoop(dependencies = {}) {
     duplicate: [],
     typeMismatch: [],
     notFound: [],
+    lowRating: [],
   };
   let droppedWatchedTotal = 0;
   let droppedNoIdTotal = 0;
@@ -681,6 +709,7 @@ async function runAgentLoop(dependencies = {}) {
   let droppedProposedTotal = 0;
   let droppedDuplicatesTotal = 0;
   let droppedRatedTotal = 0;
+  let droppedLowRatingTotal = 0;
 
   function logSummary(success, reason, recommendations) {
     const summary = {
@@ -696,6 +725,7 @@ async function runAgentLoop(dependencies = {}) {
       droppedProposed: droppedProposedTotal,
       droppedDuplicates: droppedDuplicatesTotal,
       droppedRated: droppedRatedTotal,
+      droppedLowRating: droppedLowRatingTotal,
       durationMs: Date.now() - startTime,
       model: modelName,
     };
@@ -719,6 +749,7 @@ async function runAgentLoop(dependencies = {}) {
         droppedCollected: droppedCollectedTotal,
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
+        droppedLowRating: droppedLowRatingTotal,
         elapsed: Date.now() - startTime,
       });
       logger.info("Agent loop complete", summary);
@@ -733,6 +764,7 @@ async function runAgentLoop(dependencies = {}) {
         droppedCollected: droppedCollectedTotal,
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
+        droppedLowRating: droppedLowRatingTotal,
         elapsed: Date.now() - startTime,
       });
       logger.warn("Agent loop complete", summary);
@@ -759,6 +791,7 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
       discoveredGenres: dependencies.discoveredGenres,
       genreAnalysis: dependencies.genreAnalysis,
       favoritesContext: dependencies.favoritesContext,
+      minTmdbRating,
     };
   }
 
@@ -1082,6 +1115,7 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
           matchedType,
           matchedTmdbId,
           resolution: resolutionValue,
+          tmdbRating: selectedMatch?.tmdbRating ?? undefined,
         };
       });
     }
@@ -1420,6 +1454,7 @@ if (hasText) {
       traktWatchedIdSet,
       traktRatedIdSet,
       traktHistoryIdSet,
+      minTmdbRating,
     });
 
     collected.push(...turnFilter.accepted);
@@ -1438,6 +1473,7 @@ if (hasText) {
             duplicate: [],
             typeMismatch: [],
             notFound: [],
+            lowRating: [],
           };
     droppedNoIdTotal += 0;
     droppedMissingTitleTotal += 0;
@@ -1445,6 +1481,7 @@ if (hasText) {
     droppedProposedTotal += turnFilter.droppedProposedCount || 0;
     droppedWatchedTotal += turnFilter.droppedWatchedCount || 0;
     droppedRatedTotal += turnFilter.droppedRatedCount || 0;
+    droppedLowRatingTotal += turnFilter.droppedLowRatingCount || 0;
     droppedDuplicatesTotal +=
       (turnFilter.droppedCollectedCount || 0) + (turnFilter.droppedProposedCount || 0);
 
@@ -1469,6 +1506,7 @@ if (hasText) {
         : [],
       acceptedCount: turnFilter.accepted.length,
       rejectedCount: turnFilter.rejectedCount,
+      droppedLowRating: turnFilter.droppedLowRatingCount || 0,
       rejectedBreakdown: {
         missingTmdb: 0,
         missingTitle: 0,
@@ -1479,6 +1517,7 @@ if (hasText) {
         history: turnFilter.droppedHistoryCount || 0,
         typeMismatch: turnFilter.droppedTypeMismatchCount || 0,
         notFound: turnFilter.droppedNotFoundCount || 0,
+        lowRating: turnFilter.droppedLowRatingCount || 0,
       },
       gap,
     });
@@ -1507,6 +1546,7 @@ if (hasText) {
       droppedCollected: droppedCollectedTotal,
       droppedProposed: droppedProposedTotal,
       droppedRated: droppedRatedTotal,
+      droppedLowRating: droppedLowRatingTotal,
     });
   }
 

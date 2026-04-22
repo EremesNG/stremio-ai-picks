@@ -3104,6 +3104,7 @@ const catalogHandler = async function (args, req) {
     }
 
     let searchQuery = "";
+    let minTmdbRating = undefined;
     if (typeof extra === "string" && extra.includes("search=")) {
       searchQuery = decodeURIComponent(extra.split("search=")[1]);
     } else if (extra?.search) {
@@ -3142,7 +3143,20 @@ const catalogHandler = async function (args, req) {
             } else {
                 searchQuery = entry;
             }
-            logger.info("Using custom homepage query from list", { type, query: searchQuery, index: queryIndex });
+            
+            // Parse optional minTmdbRating suffix: find LAST @@ and check if followed by valid number (0-10)
+            const lastAtIndex = searchQuery.lastIndexOf("@@");
+            if (lastAtIndex !== -1) {
+              const afterAt = searchQuery.substring(lastAtIndex + 2).trim();
+              const isStrictNumericSuffix = /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(afterAt);
+              const parsed = isStrictNumericSuffix ? Number(afterAt) : NaN;
+              if (!isNaN(parsed) && isFinite(parsed) && parsed >= 0 && parsed <= 10) {
+                minTmdbRating = parsed;
+                searchQuery = searchQuery.substring(0, lastAtIndex);
+              }
+            }
+            
+            logger.info("Using custom homepage query from list", { type, query: searchQuery, index: queryIndex, minTmdbRating });
           }
         }
 
@@ -3606,7 +3620,7 @@ const catalogHandler = async function (args, req) {
     const agentSearchTMDB = (query, mediaType, year) =>
       searchTMDB(query, mediaType, year, tmdbKey, language, includeAdult);
 
-    const agentDependencyBundle = {
+     const agentDependencyBundle = {
       geminiApiKey: geminiKey,
       geminiModel,
       modelName: geminiModel,
@@ -3634,6 +3648,7 @@ const catalogHandler = async function (args, req) {
       favoritesCacheTtlMs: null,
       logger,
       toolDeclarations,
+      minTmdbRating,
     };
 
     let agentRecommendations = null;
@@ -3727,11 +3742,12 @@ const catalogHandler = async function (args, req) {
       });
 
       try {
-        const agentResult = await runAgentLoop({
+         const agentResult = await runAgentLoop({
           ...agentDependencyBundle,
           numResults,
           filterWatched: effectiveFilterWatched,
           maxTurns,
+          minTmdbRating,
           traktWatchedIdSet,
           traktRatedIdSet,
           traktHistoryIdSet,

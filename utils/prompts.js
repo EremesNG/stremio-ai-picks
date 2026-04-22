@@ -215,6 +215,7 @@ function buildTurnMessage(ctx = {}) {
     "duplicate",
     "typeMismatch",
     "notFound",
+    "lowRating",
   ];
 
   const lines = [
@@ -230,6 +231,11 @@ function buildTurnMessage(ctx = {}) {
       ? "Do not re-propose any title already listed above."
       : "Do not re-propose any previously accepted or proposed title.",
   ];
+
+  // Add soft guidance for minimum TMDB rating if configured
+  if (typeof ctx.minTmdbRating === "number" && !Number.isNaN(ctx.minTmdbRating)) {
+    lines.push(`Prefer titles with a TMDB rating of at least ${ctx.minTmdbRating}. Avoid recommending poorly-rated content below this threshold.`);
+  }
 
   let hasRejectedBucket = false;
   rejectionBucketOrder.forEach((bucketName) => {

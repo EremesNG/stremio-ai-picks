@@ -83,6 +83,12 @@ function normalizeSearchResult(item, fallbackType) {
         : Number.isFinite(Number(item.popularity))
           ? Number(item.popularity)
           : undefined,
+    tmdbRating:
+      typeof (item.tmdbRating ?? item.vote_average) === "number"
+        ? item.tmdbRating ?? item.vote_average
+        : Number.isFinite(Number(item.tmdbRating ?? item.vote_average))
+          ? Number(item.tmdbRating ?? item.vote_average)
+          : undefined,
     type: normalizeMediaType(item.type || fallbackType) || undefined,
   };
 }
