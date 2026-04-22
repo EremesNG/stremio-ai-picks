@@ -1,7 +1,7 @@
 const logger = require("./logger");
 
 // Verify reCAPTCHA token
-async function verifyRecaptcha(token) {
+async function verifyRecaptcha(token, expectedAction = "submit_issue") {
   try {
     const response = await fetch(
       "https://www.google.com/recaptcha/api/siteverify",
@@ -29,8 +29,11 @@ async function verifyRecaptcha(token) {
     }
 
     // Check if the action matches what we expect
-    if (data.action !== "submit_issue") {
-      logger.error("reCAPTCHA action mismatch:", data.action);
+    if (data.action !== expectedAction) {
+      logger.error("reCAPTCHA action mismatch:", {
+        expectedAction,
+        receivedAction: data.action,
+      });
       return false;
     }
 
@@ -133,4 +136,5 @@ async function handleIssueSubmission(data) {
 
 module.exports = {
   handleIssueSubmission,
+  verifyRecaptcha,
 };
