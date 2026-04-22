@@ -682,6 +682,7 @@ async function runAgentLoop(dependencies = {}) {
     traktUsername,
     traktAccessToken,
     minTmdbRating = undefined,
+    preProposedTitles = [],
   } = dependencies;
 
   const filterWatched = requestedFilterWatched !== false;
@@ -714,6 +715,7 @@ async function runAgentLoop(dependencies = {}) {
         : Array.isArray(traktHistoryIdSet)
           ? traktHistoryIdSet.length
           : traktHistoryIdSet?.length,
+    preProposedCount: Array.isArray(preProposedTitles) ? preProposedTitles.length : 0,
     maxTurns,
     filterWatched,
   });
@@ -723,6 +725,7 @@ async function runAgentLoop(dependencies = {}) {
   let toolCalls = 0;
   let collected = [];
   let proposedTitles = [];
+  addProposedTitles(proposedTitles, preProposedTitles);
   let acceptedSoFar = [];
   let lastTurnRejectedTitles = {
     watched: [],
