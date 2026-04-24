@@ -1088,10 +1088,14 @@
 
         try {
           setLoading(true);
-          const recaptchaToken = await executeRecaptchaAction("install_addon");
-          if (!recaptchaToken) {
-            showError("Security verification failed. Please refresh the page and try again.");
-            return null;
+          const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+          let recaptchaToken = null;
+          if (!isLocalhost) {
+            recaptchaToken = await executeRecaptchaAction("install_addon");
+            if (!recaptchaToken) {
+              showError("Security verification failed. Please refresh the page and try again.");
+              return null;
+            }
           }
 
           const isValid = await validateApiKeys(geminiKey, tmdbKey, recaptchaToken);
@@ -1639,7 +1643,11 @@
             return;
           }
 
-          const recaptchaToken = await executeRecaptchaAction("submit_issue");
+          const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+          let recaptchaToken = null;
+          if (!isLocalhost) {
+            recaptchaToken = await executeRecaptchaAction("submit_issue");
+          }
 
           const formData = {
             feedbackType: feedbackType,

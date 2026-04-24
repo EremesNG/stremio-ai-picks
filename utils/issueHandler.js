@@ -122,10 +122,13 @@ async function createGitHubIssue(data) {
 async function handleIssueSubmission(data) {
   const { recaptchaToken } = data;
 
-  // Verify reCAPTCHA
-  const isValidCaptcha = await verifyRecaptcha(recaptchaToken);
-  if (!isValidCaptcha) {
-    throw new Error("Invalid reCAPTCHA verification");
+  // Verify reCAPTCHA (skip in dev mode)
+  const isDevMode = process.env.ENABLE_LOGGING === 'true';
+  if (process.env.RECAPTCHA_SECRET_KEY && !isDevMode) {
+    const isValidCaptcha = await verifyRecaptcha(recaptchaToken);
+    if (!isValidCaptcha) {
+      throw new Error("Invalid reCAPTCHA verification");
+    }
   }
 
   // Create GitHub issue
