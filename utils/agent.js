@@ -13,7 +13,6 @@ const {
   buildTurnMessage,
 } = require("./prompts");
 const { normalizeMediaKey } = require("./trakt");
-const { buildMediaIdentityKeys, setHasIdentity } = require("./mediaIdentity");
 
 const DEFAULT_MAX_TURNS = 6;
 const DEFAULT_MAX_TOOL_ROUNDS_PER_TURN = 8;
@@ -299,43 +298,87 @@ function addProposedTokens(target, tokens) {
   addProposedTitles(target, tokens);
 }
 
-function applyTurnFilter(items, ctx = {}) {
+function normalizeTraktStatus(value) {
+  if (!value || typeof value !== "object") {
+    return { history: false };
+  }
+
+  return {
+    history: value.history === true,
+  };
+}
+
+function buildTraktStatusLookupKey(item, fallbackType = "movie") {
+  const type = getTurnItemType(item, fallbackType);
+  const tmdbId = parseStrictInteger(item?.tmdb_id ?? item?.tmdbId ?? item?.ids?.tmdb ?? null);
+
+  if (tmdbId !== null && tmdbId > 0) {
+    return `${type}:${tmdbId}`;
+  }
+
+  const imdbId = item?.imdb_id ?? item?.imdbId ?? item?.ids?.imdb ?? null;
+  const normalizedImdb = normalizeIdentityToken(
+    imdbId === undefined || imdbId === null ? null : String(imdbId)
+  );
+
+  if (normalizedImdb) {
+    return `${type}:imdb:${normalizedImdb}`;
+  }
+
+  const normalizedTitle = normalizeIdentityToken(getTurnTitle(item));
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  const year = getTurnItemYear(item);
+  return `${type}:title:${normalizedTitle}:${year ?? ""}`;
+}
+
+function resolveTraktStatusChecker(checker) {
+  if (typeof checker === "function") {
+    return checker;
+  }
+
+  if (checker && typeof checker.checkStatus === "function") {
+    return checker.checkStatus.bind(checker);
+  }
+
+  if (checker && typeof checker.getStatus === "function") {
+    return checker.getStatus.bind(checker);
+  }
+
+  return null;
+}
+
+async function applyTurnFilter(items, ctx = {}) {
+  const itemsInTurn = Array.isArray(items) ? items : [];
   const collected = Array.isArray(ctx.collected) ? ctx.collected : [];
   const proposedTitles = Array.isArray(ctx.proposedTitles) ? ctx.proposedTitles : [];
   const filterWatched = ctx.filterWatched !== false;
+  const checkTraktStatus = filterWatched
+    ? resolveTraktStatusChecker(ctx.traktStatusChecker)
+    : null;
   const minTmdbRating =
     typeof ctx.minTmdbRating === "number" && Number.isFinite(ctx.minTmdbRating)
       ? ctx.minTmdbRating
       : null;
   const requestedType = ctx.type;
+  const traktStatusCache = ctx.traktStatusCache instanceof Map ? ctx.traktStatusCache : null;
   const collectedIdentitySet = new Set(
     collected.map((item) => getTurnPrimaryKey(item, requestedType)).filter(Boolean)
   );
   const proposedIdentitySet = buildProposedIdentitySet(proposedTitles);
-  const watchedIdentitySet =
-    filterWatched && ctx.traktWatchedIdSet instanceof Set && ctx.traktWatchedIdSet.size > 0
-      ? ctx.traktWatchedIdSet
-      : null;
-  const ratedIdentitySet =
-    filterWatched && ctx.traktRatedIdSet instanceof Set && ctx.traktRatedIdSet.size > 0
-      ? ctx.traktRatedIdSet
-      : null;
-  const historyIdentitySet =
-    filterWatched && ctx.traktHistoryIdSet instanceof Set && ctx.traktHistoryIdSet.size > 0
-      ? ctx.traktHistoryIdSet
-      : null;
 
   const accepted = [];
   let rejectedCount = 0;
   let droppedCollectedCount = 0;
   let droppedProposedCount = 0;
-  let droppedWatchedCount = 0;
-  let droppedRatedCount = 0;
   let droppedHistoryCount = 0;
   let droppedTypeMismatchCount = 0;
   let droppedNotFoundCount = 0;
   let droppedLowRatingCount = 0;
   const seenThisTurnIdentitySet = new Set();
+  const traktStatusByIndex = new Map();
   const rejectedTitles = {
     watched: [],
     rated: [],
@@ -346,7 +389,70 @@ function applyTurnFilter(items, ctx = {}) {
     lowRating: [],
   };
 
-  (Array.isArray(items) ? items : []).forEach((item) => {
+  if (checkTraktStatus && itemsInTurn.length > 0) {
+    const pendingChecksByKey = new Map();
+
+    itemsInTurn.forEach((item, index) => {
+      const resolution = typeof item?.resolution === "string" ? item.resolution : "none";
+      if (resolution === "none" || resolution === "typeMismatch") {
+        return;
+      }
+
+      const lookupKey = buildTraktStatusLookupKey(item, requestedType);
+      if (lookupKey && traktStatusCache && traktStatusCache.has(lookupKey)) {
+        traktStatusByIndex.set(index, traktStatusCache.get(lookupKey));
+        return;
+      }
+
+      const type = getTurnItemType(item, requestedType);
+      const tmdb_id = parseStrictInteger(item?.tmdb_id ?? item?.tmdbId ?? item?.ids?.tmdb ?? null);
+      const imdb_id = item?.imdb_id ?? item?.imdbId ?? item?.ids?.imdb ?? null;
+      const dedupeKey = lookupKey || `index:${index}`;
+      const existing = pendingChecksByKey.get(dedupeKey);
+
+      if (existing) {
+        existing.indexes.push(index);
+        return;
+      }
+
+      pendingChecksByKey.set(dedupeKey, {
+        indexes: [index],
+        lookupKey,
+        type,
+        tmdb_id,
+        imdb_id,
+        item,
+      });
+    });
+
+    await Promise.all(
+      [...pendingChecksByKey.values()].map(async (entry) => {
+        try {
+          const status = normalizeTraktStatus(
+            await checkTraktStatus(entry.tmdb_id, entry.imdb_id, entry.type)
+          );
+
+          if (entry.lookupKey && traktStatusCache) {
+            traktStatusCache.set(entry.lookupKey, status);
+          }
+
+          entry.indexes.forEach((index) => {
+            traktStatusByIndex.set(index, status);
+          });
+        } catch (error) {
+          logger.warn("Trakt status checker failed; falling back to not-filtered status", {
+            error: error?.message || String(error),
+            title: getTurnTitle(entry.item),
+            year: getTurnItemYear(entry.item),
+            type: entry.type,
+            tmdb_id: entry.tmdb_id,
+          });
+        }
+      })
+    );
+  }
+
+  for (const [index, item] of itemsInTurn.entries()) {
     const proposalTokens = getTurnProposalTokens(item, requestedType);
     const currentTitle = getTurnTitle(item);
     const currentYear = getTurnItemYear(item);
@@ -354,13 +460,6 @@ function applyTurnFilter(items, ctx = {}) {
     const tmdb_id = parseStrictInteger(item?.tmdb_id ?? item?.tmdbId ?? item?.ids?.tmdb ?? null);
     const type = getTurnItemType(item, requestedType);
     const primaryKey = tmdb_id !== null && tmdb_id > 0 ? `${type}:${tmdb_id}` : null;
-    const itemKeys = buildMediaIdentityKeys({
-      type,
-      tmdb_id,
-      imdb_id: item?.imdb_id ?? item?.imdbId ?? item?.ids?.imdb ?? null,
-      title: currentTitle,
-      year: currentYear,
-    });
     const comparisonTokens = [...proposalTokens];
     const normalizedTitle = normalizeIdentityToken(currentTitle);
     if (normalizedTitle && currentYear === null) {
@@ -392,49 +491,39 @@ function applyTurnFilter(items, ctx = {}) {
       rejectedCount += 1;
       droppedCollectedCount += 1;
       recordRejection("duplicate");
-      return;
+      continue;
     }
 
     if (isDuplicateProposed) {
       rejectedCount += 1;
       droppedProposedCount += 1;
       recordRejection("duplicate");
-      return;
+      continue;
     }
 
     if (resolution === "typeMismatch") {
       rejectedCount += 1;
       droppedTypeMismatchCount += 1;
       recordRejection("typeMismatch");
-      return;
+      continue;
     }
 
     if (resolution === "none") {
       rejectedCount += 1;
       droppedNotFoundCount += 1;
       recordRejection("notFound");
-      return;
+      continue;
     }
 
-    if (watchedIdentitySet && setHasIdentity(watchedIdentitySet, ...itemKeys)) {
-      rejectedCount += 1;
-      droppedWatchedCount += 1;
-      recordRejection("watched");
-      return;
-    }
+    const traktStatus = traktStatusByIndex.get(index) || {
+      history: false,
+    };
 
-    if (historyIdentitySet && setHasIdentity(historyIdentitySet, ...itemKeys)) {
+    if (traktStatus.history) {
       rejectedCount += 1;
       droppedHistoryCount += 1;
       recordRejection("history");
-      return;
-    }
-
-    if (ratedIdentitySet && setHasIdentity(ratedIdentitySet, ...itemKeys)) {
-      rejectedCount += 1;
-      droppedRatedCount += 1;
-      recordRejection("rated");
-      return;
+      continue;
     }
 
     const itemTmdbRating =
@@ -453,7 +542,7 @@ function applyTurnFilter(items, ctx = {}) {
         "lowRating",
         `lowRating: TMDB rating ${itemTmdbRating} below minimum ${minTmdbRating}`
       );
-      return;
+      continue;
     }
 
     accepted.push({
@@ -467,15 +556,15 @@ function applyTurnFilter(items, ctx = {}) {
     if (primaryKey) {
       collectedIdentitySet.add(primaryKey);
     }
-  });
+  }
 
   return {
     accepted,
     proposedTitles,
     droppedCollectedCount,
     droppedProposedCount,
-    droppedWatchedCount,
-    droppedRatedCount,
+    droppedWatchedCount: 0,
+    droppedRatedCount: 0,
     droppedHistoryCount,
     droppedTypeMismatchCount,
     droppedNotFoundCount,
@@ -665,14 +754,10 @@ async function runAgentLoop(dependencies = {}) {
     maxTurns: requestedMaxTurns = DEFAULT_MAX_TURNS,
     filterWatched: requestedFilterWatched = true,
     numResults,
-    traktWatchedIdSet,
-    traktRatedIdSet,
-    traktHistoryIdSet,
+    traktStatusChecker,
     toolDeclarations = [],
     executeTools,
     searchTMDB,
-    fetchTraktWatchedAndRated,
-    processPreferencesInParallel,
     tmdbCache,
     traktCache,
     traktRawDataCache,
@@ -697,24 +782,8 @@ async function runAgentLoop(dependencies = {}) {
     query: userQuery,
     model: modelName,
     numResults: resolvedNumResults,
-    traktWatchedKeysCount:
-      traktWatchedIdSet instanceof Set
-        ? traktWatchedIdSet.size
-        : Array.isArray(traktWatchedIdSet)
-          ? traktWatchedIdSet.length
-          : traktWatchedIdSet?.length,
-    traktRatedKeysCount:
-      traktRatedIdSet instanceof Set
-        ? traktRatedIdSet.size
-        : Array.isArray(traktRatedIdSet)
-          ? traktRatedIdSet.length
-          : traktRatedIdSet?.length,
-    traktHistoryKeysCount:
-      traktHistoryIdSet instanceof Set
-        ? traktHistoryIdSet.size
-        : Array.isArray(traktHistoryIdSet)
-          ? traktHistoryIdSet.length
-          : traktHistoryIdSet?.length,
+    lazyTraktFilteringEnabled: filterWatched,
+    hasTraktStatusChecker: typeof traktStatusChecker === "function",
     preProposedCount: Array.isArray(preProposedTitles) ? preProposedTitles.length : 0,
     maxTurns,
     filterWatched,
@@ -727,6 +796,7 @@ async function runAgentLoop(dependencies = {}) {
   let proposedTitles = [];
   addProposedTitles(proposedTitles, preProposedTitles);
   let acceptedSoFar = [];
+  const traktStatusCacheByItem = new Map();
   let lastTurnRejectedTitles = {
     watched: [],
     rated: [],
@@ -873,8 +943,6 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
 
   const runtime = {
     searchTMDB,
-    fetchTraktWatchedAndRated,
-    processPreferencesInParallel,
     caches: {
       tmdbCache,
       traktCache,
@@ -885,9 +953,7 @@ gap: Math.ceil((resolvedNumResults - collected.length) * OVERFETCH_FACTOR),
     traktAuth,
     traktUsername,
     traktAccessToken,
-    traktWatchedIdSet,
-    traktRatedIdSet,
-    traktHistoryIdSet,
+    traktStatusChecker,
   };
 
   async function executeAgentTurn({
@@ -1505,14 +1571,13 @@ if (hasText) {
 
     recordProposedTitlesFromRecommendations(turnResult.parsedRawItems, proposedTitles);
 
-    const turnFilter = applyTurnFilter(turnResult.parsedItems, {
+    const turnFilter = await applyTurnFilter(turnResult.parsedItems, {
       collected,
       proposedTitles,
       type,
       filterWatched,
-      traktWatchedIdSet,
-      traktRatedIdSet,
-      traktHistoryIdSet,
+      traktStatusChecker,
+      traktStatusCache: traktStatusCacheByItem,
       minTmdbRating,
     });
 
@@ -1574,6 +1639,9 @@ if (hasText) {
         missingTitle: 0,
         duplicateCollected: turnFilter.droppedCollectedCount || 0,
         duplicateProposed: turnFilter.droppedProposedCount || 0,
+        duplicate:
+          (turnFilter.droppedCollectedCount || 0) +
+          (turnFilter.droppedProposedCount || 0),
         watched: turnFilter.droppedWatchedCount || 0,
         rated: turnFilter.droppedRatedCount || 0,
         history: turnFilter.droppedHistoryCount || 0,

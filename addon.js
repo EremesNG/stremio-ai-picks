@@ -7,8 +7,7 @@ const { decryptConfig } = require("./utils/crypto");
 const { withRetry } = require("./utils/apiRetry");
 const { runAgentLoop } = require("./utils/agent");
 const { toolDeclarations, executeTools: executeAgentTools } = require("./utils/agent-tools");
-const { fetchTraktFavorites, normalizeMediaKey } = require("./utils/trakt");
-const { buildMediaIdentityKeys, buildMediaIdentitySet } = require("./utils/mediaIdentity");
+const { fetchTraktFavorites, createTraktStatusChecker } = require("./utils/trakt");
 const { buildSimilarContentPrompt, buildClassificationPrompt } = require("./utils/prompts");
 const {
   getStatValue,
@@ -34,14 +33,9 @@ const RPDB_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 day cache for RPDB
 const DEFAULT_RPDB_KEY = process.env.RPDB_API_KEY;
 const DEFAULT_FANART_KEY = process.env.FANART_API_KEY;
 const ENABLE_LOGGING = process.env.ENABLE_LOGGING === "true" || false;
-const TRAKT_API_BASE = "https://api.trakt.tv";
 const TRAKT_RAW_DATA_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DEFAULT_TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID;
 const MAX_AI_RECOMMENDATIONS = 30;
-const MAX_DO_NOT_RECOMMEND_ITEMS = 200;
-const TRAKT_PAGINATION_LIMIT = 1000;
-const TRAKT_PAGINATION_MAX_PAGES = 20;
-const TRAKT_PAGINATION_CONCURRENCY = 4;
 
 // Stats counter for tracking total queries
 let queryCounter = 0;
@@ -319,38 +313,6 @@ function purgeEmptyAiCacheEntries() {
 }
 
 // Helper function to merge and deduplicate Trakt items
-function mergeAndDeduplicate(newItems, existingItems) {
-  // Create a map of existing items by ID for quick lookup
-  const existingMap = new Map();
-  existingItems.forEach((item) => {
-    const media = item.movie || item.show;
-    const id = item.id || media?.ids?.trakt;
-    if (id) {
-      existingMap.set(id, item);
-    }
-  });
-
-  // Add new items, replacing existing ones if newer
-  newItems.forEach((item) => {
-    const media = item.movie || item.show;
-    const id = item.id || media?.ids?.trakt;
-    if (id) {
-      // If item exists, keep the newer one based on last_activity or just replace
-      if (
-        !existingMap.has(id) ||
-        (item.last_activity &&
-          existingMap.get(id).last_activity &&
-          new Date(item.last_activity) >
-            new Date(existingMap.get(id).last_activity))
-      ) {
-        existingMap.set(id, item);
-      }
-    }
-  });
-
-  // Convert map back to array
-  return Array.from(existingMap.values());
-}
 
 // Modular functions for processing different aspects of Trakt data
 function processGenres(watchedItems, ratedItems) {
@@ -488,36 +450,7 @@ function processRatings(ratedItems) {
 }
 
 // Process all preferences in parallel
-async function processPreferencesInParallel(watched, rated, _history) {
-  const processingStart = Date.now();
 
-  // Run all processing functions in parallel
-  const [genres, actors, directors, yearRange, ratings] = await Promise.all([
-    Promise.resolve(processGenres(watched, rated)),
-    Promise.resolve(processActors(watched, rated)),
-    Promise.resolve(processDirectors(watched, rated)),
-    Promise.resolve(processYears(watched, rated)),
-    Promise.resolve(processRatings(rated)),
-  ]);
-
-  const processingTime = Date.now() - processingStart;
-  logger.debug("Trakt preference processing completed", {
-    processingTimeMs: processingTime,
-    genresCount: genres.length,
-    actorsCount: actors.length,
-    directorsCount: directors.length,
-    hasYearRange: !!yearRange,
-    ratingsCount: ratings.length,
-  });
-
-  return {
-    genres,
-    actors,
-    directors,
-    yearRange,
-    ratings,
-  };
-}
 
 /**
  * Creates a Stremio meta object with a dynamically generated SVG poster for displaying errors.
@@ -600,367 +533,10 @@ async function makeApiCall(url, headers) {
   );
 }
 
-function getTraktPageCount(response) {
-  const pageCountHeader = response?.headers?.get("X-Pagination-Page-Count");
-  const pageCount = Number.parseInt(pageCountHeader, 10);
-  return Number.isFinite(pageCount) && pageCount > 0 ? pageCount : 1;
-}
-
-async function fetchTraktPaginatedCollection(endpoint, headers, operationLabel) {
-  const firstPageUrl = new URL(endpoint);
-  firstPageUrl.searchParams.set("page", "1");
-  firstPageUrl.searchParams.set("limit", String(TRAKT_PAGINATION_LIMIT));
-
-  const firstResponse = await makeApiCall(firstPageUrl.toString(), headers);
-  logger.agent('TRAKT_API_RESPONSE', {
-    url: firstPageUrl.toString().replace(/access_token=[^&]+/, 'access_token=REDACTED'),
-    status: firstResponse.status,
-    statusText: firstResponse.statusText,
-    pageCount: firstResponse.headers.get('X-Pagination-Page-Count'),
-    itemCount: firstResponse.headers.get('X-Pagination-Item-Count'),
-    ok: firstResponse.ok,
-  });
-
-  if (!firstResponse.ok) {
-    const errorBody = await firstResponse.text().catch(() => 'unable to read body');
-    logger.agent('TRAKT_API_ERROR', {
-      url: firstPageUrl.toString().replace(/access_token=[^&]+/, 'access_token=REDACTED'),
-      status: firstResponse.status,
-      body: errorBody,
-      label: operationLabel,
-    });
-    throw new Error(`Trakt API error: ${firstResponse.status} ${firstResponse.statusText}`);
-  }
-
-  const firstPage = await firstResponse.json().catch(() => []);
-  logger.agent('TRAKT_FIRST_PAGE', {
-    isArray: Array.isArray(firstPage),
-    itemCount: Array.isArray(firstPage) ? firstPage.length : 0,
-    type: typeof firstPage,
-    sample: Array.isArray(firstPage) ? (firstPage[0] ? Object.keys(firstPage[0]) : []) : Object.keys(firstPage || {}),
-    label: operationLabel,
-  });
-  const totalPages = getTraktPageCount(firstResponse);
-  const pageCount = Math.min(totalPages, TRAKT_PAGINATION_MAX_PAGES);
-
-  if (totalPages > TRAKT_PAGINATION_MAX_PAGES) {
-    logger.warn("Trakt pagination cap reached", {
-      operation: operationLabel,
-      endpoint,
-      pageCount: totalPages,
-      cappedAt: TRAKT_PAGINATION_MAX_PAGES,
-    });
-  }
-
-  if (pageCount <= 1) {
-    return Array.isArray(firstPage) ? firstPage : [];
-  }
-
-  const pages = [];
-  for (let page = 2; page <= pageCount; page += 1) {
-    pages.push(page);
-  }
-
-  const additionalPages = [];
-  for (let index = 0; index < pages.length; index += TRAKT_PAGINATION_CONCURRENCY) {
-    const batch = pages.slice(index, index + TRAKT_PAGINATION_CONCURRENCY);
-    const batchResults = await Promise.all(
-      batch.map(async (page) => {
-        const pageUrl = new URL(endpoint);
-        pageUrl.searchParams.set("page", String(page));
-        pageUrl.searchParams.set("limit", String(TRAKT_PAGINATION_LIMIT));
-
-        const pageResponse = await makeApiCall(pageUrl.toString(), headers);
-        if (!pageResponse.ok) {
-          const errorBody = await pageResponse.text().catch(() => 'unable to read body');
-          logger.agent('TRAKT_API_ERROR', {
-            url: pageUrl.toString().replace(/access_token=[^&]+/, 'access_token=REDACTED'),
-            status: pageResponse.status,
-            body: errorBody,
-            label: operationLabel,
-            page,
-          });
-          return [];
-        }
-
-        const pageData = await pageResponse.json().catch(() => []);
-        return Array.isArray(pageData) ? pageData : [];
-      })
-    );
-
-    additionalPages.push(...batchResults);
-  }
-
-  return [
-    ...(Array.isArray(firstPage) ? firstPage : []),
-    ...additionalPages.flat(),
-  ];
-}
-
 // Function to fetch incremental Trakt data
-async function fetchTraktIncrementalData(
-  clientId,
-  accessToken,
-  type,
-  lastUpdate
-) {
-  // Format date for Trakt API (ISO string without milliseconds)
-  const startDate = new Date(lastUpdate).toISOString().split(".")[0] + "Z";
-
-  const endpoints = [
-    `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full&start_at=${startDate}`,
-    `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full&start_at=${startDate}`,
-    `${TRAKT_API_BASE}/users/me/history/${type}?extended=full&start_at=${startDate}`,
-  ];
-
-  const headers = {
-    "Content-Type": "application/json",
-    "User-Agent": "stremio-ai-picks",
-    "trakt-api-version": "2",
-    "trakt-api-key": clientId,
-    Authorization: `Bearer ${accessToken}`,
-  };
-
-  // Fetch all data in parallel
-  const responses = await Promise.all(
-    endpoints.map((endpoint) =>
-      fetchTraktPaginatedCollection(endpoint, headers, "Trakt incremental fetch")
-        .catch((err) => {
-          logger.error("Trakt API Error:", { endpoint, error: err.message });
-          return [];
-        })
-    )
-  );
-
-  return {
-    watched: responses[0] || [],
-    rated: responses[1] || [],
-    history: responses[2] || [],
-  };
-}
 
 // Main function to fetch Trakt data with optimizations
-async function fetchTraktWatchedAndRated(
-  clientId,
-  accessToken,
-  type = "movies",
-  configData = null
-) {
-  logger.agent('TRAKT_FETCH_START', { mediaType: type, hasClientId: !!clientId, hasAccessToken: !!accessToken });
 
-  logger.info("fetchTraktWatchedAndRated called", {
-    hasClientId: !!clientId,
-    clientIdLength: clientId?.length,
-    hasAccessToken: !!accessToken,
-    accessTokenLength: accessToken?.length,
-    type,
-  });
-
-  if (!clientId || !accessToken) {
-    logger.agent('TRAKT_FETCH_FAILED', { reason: 'missing_credentials', error: 'clientId or accessToken is missing' });
-    logger.error("Missing Trakt credentials", {
-      hasClientId: !!clientId,
-      hasAccessToken: !!accessToken,
-    });
-    return null;
-  }
-
-  const traktUsername = configData?.traktUsername || configData?.TraktUsername || '';
-  const rawCacheKey = `trakt_raw_${accessToken}_${type}`;
-  const processedCacheKey = `trakt_${traktUsername}_${type}`;
-  const fetchLockKey = processedCacheKey;
-
-  if (traktFetchLocks.has(fetchLockKey)) {
-    logger.info("Waiting for in-flight Trakt fetch", {
-      cacheKey: fetchLockKey,
-      type,
-    });
-    return await traktFetchLocks.get(fetchLockKey);
-  }
-
-  const fetchPromise = (async () => {
-    // Check if we have processed data in cache
-    const tursoTraktCache = await getTraktCache(processedCacheKey);
-    if (tursoTraktCache) {
-      const cached = tursoTraktCache;
-      logger.agent('TRAKT_CACHE_HIT', { cacheKey: processedCacheKey, watchedCount: cached?.data?.watched?.length, ratedCount: cached?.data?.rated?.length });
-      logger.info("Trakt processed cache hit", {
-        cacheKey: processedCacheKey,
-        type,
-        watchedCount: cached.data?.watched?.length || 0,
-        ratedCount: cached.data?.rated?.length || 0,
-        cachedAt: new Date(cached.timestamp).toISOString(),
-        age: `${Math.round((Date.now() - cached.timestamp) / 1000)}s`,
-      });
-      return cached.data;
-    }
-
-    // Check if we have raw data that needs updating
-    let rawData;
-    let isIncremental = false;
-
-    if (traktRawDataCache.has(rawCacheKey)) {
-      const cachedRaw = traktRawDataCache.get(rawCacheKey);
-      const lastUpdate = cachedRaw.lastUpdate || cachedRaw.timestamp;
-
-      // Always do incremental updates when cache exists, regardless of age
-      logger.info("Performing incremental Trakt update", {
-        cacheKey: rawCacheKey,
-        lastUpdate: new Date(lastUpdate).toISOString(),
-        age: `${Math.round((Date.now() - lastUpdate) / 1000)}s`,
-      });
-
-      try {
-        // Fetch only new data since last update
-        const newData = await fetchTraktIncrementalData(
-          clientId,
-          accessToken,
-          type,
-          lastUpdate
-        );
-
-        // Merge with existing data
-        rawData = {
-          watched: mergeAndDeduplicate(newData.watched, cachedRaw.data.watched),
-          rated: mergeAndDeduplicate(newData.rated, cachedRaw.data.rated),
-          history: mergeAndDeduplicate(newData.history, cachedRaw.data.history),
-          lastUpdate: Date.now(),
-        };
-
-        isIncremental = true;
-
-        // Update raw data cache
-        traktRawDataCache.set(rawCacheKey, {
-          timestamp: Date.now(),
-          lastUpdate: Date.now(),
-          data: rawData,
-        });
-
-        logger.info("Incremental Trakt update completed", {
-          newWatchedCount: newData.watched.length,
-          newRatedCount: newData.rated.length,
-          newHistoryCount: newData.history.length,
-          totalWatchedCount: rawData.watched.length,
-          totalRatedCount: rawData.rated.length,
-          totalHistoryCount: rawData.history.length,
-        });
-      } catch (error) {
-        logger.error(
-          "Incremental Trakt update failed, falling back to full refresh",
-          {
-            error: error.message,
-          }
-        );
-        isIncremental = false;
-      }
-    }
-
-    // If we don't have raw data or incremental update failed, do a full refresh
-    if (!rawData) {
-      logger.info("Performing full Trakt data refresh", { type });
-
-      try {
-        const fetchStart = Date.now();
-        // Use the original fetch logic for a full refresh but without limits
-        const endpoints = [
-          `${TRAKT_API_BASE}/users/me/watched/${type}?extended=full`,
-          `${TRAKT_API_BASE}/users/me/ratings/${type}?extended=full`,
-          `${TRAKT_API_BASE}/users/me/history/${type}?extended=full`,
-        ];
-
-        const headers = {
-          "Content-Type": "application/json",
-          "User-Agent": "stremio-ai-picks",
-          "trakt-api-version": "2",
-          "trakt-api-key": clientId,
-          Authorization: `Bearer ${accessToken}`,
-        };
-
-        const responses = await Promise.all(
-          endpoints.map((endpoint) =>
-            fetchTraktPaginatedCollection(endpoint, headers, "Trakt full refresh")
-              .catch((err) => {
-                logger.error("Trakt API Error:", {
-                  endpoint,
-                  error: err.message,
-                });
-                return [];
-              })
-          )
-        );
-
-        const fetchTime = Date.now() - fetchStart;
-        const [watched, rated, history] = responses;
-
-        rawData = {
-          watched: watched || [],
-          rated: rated || [],
-          history: history || [],
-          lastUpdate: Date.now(),
-        };
-
-        // Update raw data cache
-        traktRawDataCache.set(rawCacheKey, {
-          timestamp: Date.now(),
-          lastUpdate: Date.now(),
-          data: rawData,
-        });
-
-        logger.info("Full Trakt refresh completed", {
-          fetchTimeMs: fetchTime,
-          watchedCount: rawData.watched.length,
-          ratedCount: rawData.rated.length,
-          historyCount: rawData.history.length,
-        });
-      } catch (error) {
-        logger.agent('TRAKT_FETCH_FAILED', { reason: 'api_error_during_full_refresh', error: error?.message });
-        logger.error("Trakt API Error:", {
-          error: error.message,
-          stack: error.stack,
-        });
-        return null;
-      }
-    }
-
-    // Process the data (raw or incrementally updated) in parallel
-    const processingStart = Date.now();
-    const preferences = await processPreferencesInParallel(
-      rawData.watched,
-      rawData.rated,
-      rawData.history
-    );
-    const processingTime = Date.now() - processingStart;
-
-    // Create the final result
-    const result = {
-      watched: rawData.watched,
-      rated: rawData.rated,
-      history: rawData.history,
-      preferences,
-      lastUpdate: rawData.lastUpdate,
-      isIncrementalUpdate: isIncremental,
-    };
-
-    // Cache the processed result
-    await setTraktCache(processedCacheKey, result);
-
-    logger.info("Trakt data processing and caching completed", {
-      processingTimeMs: processingTime,
-      isIncremental: isIncremental,
-      cacheKey: processedCacheKey,
-    });
-
-    return result;
-  })();
-
-  traktFetchLocks.set(fetchLockKey, fetchPromise);
-
-  try {
-    return await fetchPromise;
-  } finally {
-    traktFetchLocks.delete(fetchLockKey);
-  }
-}
 
 async function searchTMDB(title, type, year, tmdbKey, language = "en-US", includeAdult = false) {
   const startTime = Date.now();
@@ -1682,84 +1258,6 @@ function extractGenreCriteria(query) {
 // Add this function to better detect recommendation queries
 function isRecommendationQuery(query) {
   return query.toLowerCase().trim().startsWith("recommend");
-}
-
-/**
- * Checks if an item is in the user's watch history or rated items
- * @param {Object} item - The item to check
- * @param {Array} watchHistory - The user's watch history from Trakt
- * @param {Array} ratedItems - The user's rated items from Trakt
- * @returns {boolean} - True if the item is in the watch history or rated items
- */
-function isItemWatchedOrRated(item, watchHistory, ratedItems) {
-  if (!item) {
-    return false;
-  }
-
-  // Normalize the item name for comparison
-  const normalizedName = item.name.toLowerCase().trim();
-  const itemYear = parseInt(item.year);
-
-  // Debug logging for specific items (uncomment for troubleshooting)
-  // if (normalizedName.includes("specific movie title")) {
-  //   logger.debug("Checking specific item", {
-  //     item: { name: item.name, year: item.year },
-  //     watchHistoryCount: watchHistory?.length || 0,
-  //     ratedItemsCount: ratedItems?.length || 0
-  //   });
-  // }
-
-  // Check if the item exists in watch history
-  const isWatched =
-    watchHistory &&
-    watchHistory.length > 0 &&
-    watchHistory.some((historyItem) => {
-      const media = historyItem.movie || historyItem.show;
-      if (!media) return false;
-
-      const historyName = media.title.toLowerCase().trim();
-      const historyYear = parseInt(media.year);
-
-      // Debug logging for specific items (uncomment for troubleshooting)
-      // if (normalizedName.includes("specific movie title") && isMatch) {
-      //   logger.debug("Found match in watch history", {
-      //     recommendation: { name: item.name, year: item.year },
-      //     watchedItem: { title: media.title, year: media.year }
-      //   });
-      // }
-
-      return (
-        normalizedName === historyName &&
-        (!itemYear || !historyYear || itemYear === historyYear)
-      );
-    });
-
-  // Check if the item exists in rated items
-  const isRated =
-    ratedItems &&
-    ratedItems.length > 0 &&
-    ratedItems.some((ratedItem) => {
-      const media = ratedItem.movie || ratedItem.show;
-      if (!media) return false;
-
-      const ratedName = media.title.toLowerCase().trim();
-      const ratedYear = parseInt(media.year);
-
-      // Debug logging for specific items (uncomment for troubleshooting)
-      // if (normalizedName.includes("specific movie title") && isMatch) {
-      //   logger.debug("Found match in rated items", {
-      //     recommendation: { name: item.name, year: item.year },
-      //     ratedItem: { title: media.title, year: media.year, rating: ratedItem.rating }
-      //   });
-      // }
-
-      return (
-        normalizedName === ratedName &&
-        (!itemYear || !ratedYear || itemYear === ratedYear)
-      );
-    });
-
-  return isWatched || isRated;
 }
 
 /**
@@ -2849,54 +2347,6 @@ async function discoverTypeAndGenres(query, geminiKey, geminiModel) {
   }
 }
 
-/**
- * Filters Trakt data based on specified genres
- * @param {Object} traktData - The complete Trakt data
- * @param {string[]} genres - The genres to filter by
- * @returns {Object} - The filtered Trakt data
- */
-function filterTraktDataByGenres(traktData, genres) {
-  if (!traktData || !genres || genres.length === 0) {
-    return {
-      recentlyWatched: [],
-      highlyRated: [],
-      lowRated: [],
-    };
-  }
-
-  const { watched, rated } = traktData;
-  const genreSet = new Set(genres.map((g) => g.toLowerCase()));
-
-  // Helper function to check if an item has any of the specified genres
-  const hasMatchingGenre = (item) => {
-    const media = item.movie || item.show;
-    if (!media || !media.genres || media.genres.length === 0) return false;
-
-    return media.genres.some((g) => genreSet.has(g.toLowerCase()));
-  };
-
-  // Filter watched items by genre
-  const recentlyWatched = (watched || []).filter(hasMatchingGenre).slice(0, 100);
-
-  // Filter highly rated items (4-5 stars)
-  const highlyRated = (rated || [])
-    .filter((item) => item.rating >= 4)
-    .filter(hasMatchingGenre)
-    .slice(0, 100); // Top 100 highly rated
-
-  // Filter low rated items (1-2 stars)
-  const lowRated = (rated || [])
-    .filter((item) => item.rating <= 2)
-    .filter(hasMatchingGenre)
-    .slice(0, 100); // Top 100 low rated
-
-  return {
-    recentlyWatched,
-    highlyRated,
-    lowRated,
-  };
-}
-
 // Function to increment and get the query counter
 function incrementQueryCounter(amount = 1) {
   queryCounter += amount;
@@ -2935,137 +2385,6 @@ function getRpdbTierFromApiKey(apiKey) {
     });
     return -1;
   }
-}
-
-function getTraktItemTimestamp(item, fallbackIndex = 0) {
-  const candidates = [
-    item?.listed_at,
-    item?.rated_at,
-    item?.watched_at,
-    item?.last_watched_at,
-    item?.updated_at,
-    item?.collected_at,
-  ];
-
-  for (const value of candidates) {
-    if (!value) {
-      continue;
-    }
-
-    const timestamp = Date.parse(value);
-    if (Number.isFinite(timestamp)) {
-      return timestamp;
-    }
-  }
-
-  return Number.MAX_SAFE_INTEGER - fallbackIndex;
-}
-
-function buildDoNotRecommendList(watchedItems = [], ratedItems = []) {
-  const combined = [];
-  let order = 0;
-
-  (Array.isArray(watchedItems) ? watchedItems : []).forEach((item, index) => {
-    combined.push({ item, index, order: order += 1 });
-  });
-
-  (Array.isArray(ratedItems) ? ratedItems : []).forEach((item, index) => {
-    combined.push({ item, index, order: order += 1 });
-  });
-
-  combined.sort((left, right) => {
-    const leftTs = getTraktItemTimestamp(left.item, left.index);
-    const rightTs = getTraktItemTimestamp(right.item, right.index);
-
-    if (leftTs !== rightTs) {
-      return rightTs - leftTs;
-    }
-
-    return left.order - right.order;
-  });
-
-  const deduped = new Map();
-
-  combined.forEach(({ item }) => {
-    const normalized = normalizeMediaKey(item);
-    if (!normalized.type && normalized.tmdb_id == null && !normalized.imdb_id && !normalized.title) {
-      return;
-    }
-
-    const key = buildMediaIdentityKeys(normalized)[0] || [
-      normalized.type || "",
-      normalized.tmdb_id ?? "",
-      normalized.imdb_id || "",
-      normalized.title || "",
-      normalized.year ?? "",
-    ].join("|");
-
-    if (!deduped.has(key)) {
-      deduped.set(key, normalized);
-    }
-  });
-
-  const withTmdb = [];
-  const withoutTmdb = [];
-
-  for (const normalized of deduped.values()) {
-    if (normalized.tmdb_id != null) {
-      withTmdb.push(normalized);
-    } else {
-      withoutTmdb.push(normalized);
-    }
-  }
-
-  return [...withTmdb, ...withoutTmdb].slice(0, MAX_DO_NOT_RECOMMEND_ITEMS);
-}
-
-function createFilterCandidates({ traktWatchedIdSet, traktRatedIdSet }) {
-  const seenTmdb = new Set();
-
-  const hasMatch = (candidate) => {
-    const normalized = normalizeMediaKey(candidate);
-    const keys = buildMediaIdentityKeys(normalized);
-
-    return keys.some((key) => traktWatchedIdSet.has(key) || traktRatedIdSet.has(key));
-  };
-
-  return function filterCandidates(rawItems = []) {
-    const unwatched = [];
-    const droppedWatched = [];
-    const droppedNoId = [];
-    const droppedDuplicates = [];
-
-    (Array.isArray(rawItems) ? rawItems : []).forEach((item) => {
-      const normalized = normalizeMediaKey(item);
-
-      if (!normalized.tmdb_id) {
-        droppedNoId.push(item);
-        return;
-      }
-
-      const tmdbKey = `tmdb:${normalized.type || ""}:${normalized.tmdb_id}`;
-      if (seenTmdb.has(tmdbKey)) {
-        droppedDuplicates.push(item);
-        return;
-      }
-
-      if (hasMatch(normalized)) {
-        droppedWatched.push(item);
-        seenTmdb.add(tmdbKey);
-        return;
-      }
-
-      unwatched.push(item);
-      seenTmdb.add(tmdbKey);
-    });
-
-    return {
-      unwatched,
-      droppedWatched,
-      droppedNoId,
-      droppedDuplicates,
-    };
-  };
 }
 
 function normalizeRecommendationBuckets(recommendations) {
@@ -3513,8 +2832,7 @@ const catalogHandler = async function (args, req) {
     // Now check if it's a recommendation query
     const isRecommendation = isRecommendationQuery(searchQuery);
     let discoveredGenres = [];
-    let traktData = null;
-    let filteredTraktData = null;
+    let favoritesContext = null;
 
     // For recommendation queries, use the new workflow with genre discovery
     if (isRecommendation) {
@@ -3552,97 +2870,36 @@ const catalogHandler = async function (args, req) {
         originalType: type,
       });
 
-      // If Trakt is configured, get user data ONLY for recommendation queries
-      if (DEFAULT_TRAKT_CLIENT_ID && configData.TraktAccessToken) {
-        logger.info("Fetching Trakt data for recommendation query", {
+      // For recommendation queries, pass only compact preference context when already cached.
+      // Avoid eager raw watched/rated/history fetches; agent tools can fetch on-demand.
+      if (DEFAULT_TRAKT_CLIENT_ID && configData.TraktAccessToken && traktUsername) {
+        const mediaType = type === "movie" ? "movies" : "shows";
+        const processedCacheKey = `trakt_${traktUsername}_${mediaType}`;
+        const cachedTraktData = await getTraktCache(processedCacheKey);
+        favoritesContext = cachedTraktData?.data?.preferences || null;
+
+        logger.info("Using cached Trakt preferences for favorites context", {
           hasTraktClientId: !!DEFAULT_TRAKT_CLIENT_ID,
           traktClientIdLength: DEFAULT_TRAKT_CLIENT_ID?.length,
           hasTraktAccessToken: !!configData.TraktAccessToken,
           traktAccessTokenLength: configData.TraktAccessToken?.length,
-          isRecommendation: isRecommendation,
+          traktUsername,
+          mediaType,
+          cacheKey: processedCacheKey,
+          cacheHit: !!cachedTraktData,
+          hasPreferences: !!favoritesContext,
           query: searchQuery,
         });
-
-        traktData = await fetchTraktWatchedAndRated(
-          DEFAULT_TRAKT_CLIENT_ID,
-          configData.TraktAccessToken,
-          type === "movie" ? "movies" : "shows",
-          configData
-        );
-
-        logger.agent('TRAKT_FETCH_RESULT', {
-          traktDataExists: !!traktData,
-          watchedCount: traktData?.watched?.length ?? 0,
-          ratedCount: traktData?.rated?.length ?? 0,
-          historyCount: traktData?.history?.length ?? 0,
-          preferencesExists: !!traktData?.preferences,
-          isIncrementalUpdate: traktData?.isIncrementalUpdate ?? null,
-          watchedSample: (traktData?.watched || []).slice(0, 2).map(item => {
-            const media = item?.movie || item?.show;
-            return { title: media?.title, year: media?.year, tmdb: media?.ids?.tmdb, imdb: media?.ids?.imdb, type: item?.movie ? 'movie' : 'show' };
-          }),
-        });
-
-        // Filter Trakt data based on discovered genres if we have any
-        if (traktData) {
-          if (discoveredGenres.length > 0) {
-            filteredTraktData = filterTraktDataByGenres(
-              traktData,
-              discoveredGenres
-            );
-
-            logger.info("Filtered Trakt data by genres", {
-              genres: discoveredGenres,
-              recentlyWatchedCount: filteredTraktData.recentlyWatched.length,
-              highlyRatedCount: filteredTraktData.highlyRated.length,
-              lowRatedCount: filteredTraktData.lowRated.length,
-            });
-
-            // Log if filtering by genres eliminated all Trakt data
-            if (
-              filteredTraktData.recentlyWatched.length === 0 &&
-              filteredTraktData.highlyRated.length === 0 &&
-              filteredTraktData.lowRated.length === 0
-            ) {
-              if (ENABLE_LOGGING) {
-                logger.emptyCatalog("No Trakt data matches discovered genres", {
-                  type,
-                  searchQuery,
-                  discoveredGenres,
-                  totalWatched: traktData.watched.length,
-                  totalRated: traktData.rated.length,
-                });
-              }
-            }
-          } else {
-            // When no genres are discovered, use all Trakt data
-            filteredTraktData = {
-              recentlyWatched: traktData.watched?.slice(0, 100) || [],
-              highlyRated: (traktData.rated || [])
-                .filter((item) => item.rating >= 4)
-                .slice(0, 25),
-              lowRated: (traktData.rated || [])
-                .filter((item) => item.rating <= 2)
-                .slice(0, 25),
-            };
-
-            logger.info(
-              "Using all Trakt data (no specific genres discovered)",
-              {
-                totalWatched: traktData.watched?.length || 0,
-                totalRated: traktData.rated?.length || 0,
-                recentlyWatchedCount: filteredTraktData.recentlyWatched.length,
-                highlyRatedCount: filteredTraktData.highlyRated.length,
-                lowRatedCount: filteredTraktData.lowRated.length,
-              }
-            );
-          }
-        }
       } else {
         logger.agent('TRAKT_FETCH_SKIPPED', {
           hasTraktClientId: !!DEFAULT_TRAKT_CLIENT_ID,
           hasTraktAccessToken: !!configData.TraktAccessToken,
-          reason: !DEFAULT_TRAKT_CLIENT_ID ? 'missing_TRAKT_CLIENT_ID_env' : 'missing_user_TraktAccessToken',
+          hasTraktUsername: !!traktUsername,
+          reason: !DEFAULT_TRAKT_CLIENT_ID
+            ? 'missing_TRAKT_CLIENT_ID_env'
+            : !configData.TraktAccessToken
+              ? 'missing_user_TraktAccessToken'
+              : 'missing_user_TraktUsername',
         });
       }
     }
@@ -3862,9 +3119,6 @@ const catalogHandler = async function (args, req) {
         accessToken: traktAccessToken,
         clientId: traktClientId,
       },
-      fetchTraktWatchedAndRated,
-      traktWatchedFetcher: fetchTraktWatchedAndRated,
-      processPreferencesInParallel,
       fetchTraktFavorites,
       tmdbCache,
       tmdbDetailsCache,
@@ -3885,51 +3139,20 @@ const catalogHandler = async function (args, req) {
     if (isRecommendation) {
       const hasTraktAuth = !!(traktClientId && traktUsername && traktAccessToken);
       const effectiveFilterWatched = hasTraktAuth ? filterWatched : false;
-      const shouldBuildTraktIdentitySets = hasTraktAuth && effectiveFilterWatched;
-      const traktWatchedItems = Array.isArray(traktData?.watched) ? traktData.watched : [];
-      const traktRatedItems = Array.isArray(traktData?.rated) ? traktData.rated : [];
-      const traktHistoryItems = Array.isArray(traktData?.history) ? traktData.history : [];
-      const traktWatchedIdSet = shouldBuildTraktIdentitySets
-        ? buildMediaIdentitySet(traktWatchedItems)
-        : new Set();
-      const traktRatedIdSet = shouldBuildTraktIdentitySets
-        ? buildMediaIdentitySet(traktRatedItems)
-        : new Set();
-      const traktHistoryIdSet = shouldBuildTraktIdentitySets
-        ? buildMediaIdentitySet(traktHistoryItems)
-        : new Set();
-      const doNotRecommend = shouldBuildTraktIdentitySets
-        ? buildDoNotRecommendList(traktWatchedItems, traktRatedItems)
-        : [];
+      const shouldPrepareTraktChecker = hasTraktAuth && effectiveFilterWatched;
+      const traktStatusChecker = shouldPrepareTraktChecker
+        ? createTraktStatusChecker({
+            traktClientId,
+            traktAccessToken,
+            traktUsername,
+            logger,
+          })
+        : null;
 
-      if (shouldBuildTraktIdentitySets) {
-        logger.agent('TRAKT_IDENTITY_SETS', {
-          traktWatchedIdSetSize: traktWatchedIdSet.size,
-          traktRatedIdSetSize: traktRatedIdSet.size,
-          traktHistoryIdSetSize: traktHistoryIdSet.size,
-          doNotRecommendCount: doNotRecommend.length,
-          doNotRecommendSample: doNotRecommend.slice(0, 5),
-          watchedIdSample: [...traktWatchedIdSet].slice(0, 5),
-        });
-
-        logger.info("Trakt identity sets built for agent", {
-          watchedSize: traktWatchedIdSet.size,
-          ratedSize: traktRatedIdSet.size,
-          historySize: traktHistoryIdSet.size,
-          doNotRecommendCount: doNotRecommend.length,
+      if (shouldPrepareTraktChecker) {
+        logger.info("Trakt history status checker prepared for agent", {
           traktUsername,
         });
-
-        if (traktWatchedIdSet.size === 0 && traktRatedIdSet.size === 0 && traktHistoryIdSet.size === 0) {
-          logger.agent('TRAKT_WARNING_EMPTY_SETS', {
-            message: 'Trakt auth is present but watched/rated/history sets are EMPTY. Agent will not filter any recommendations.',
-            traktUsername,
-            traktDataWasNull: traktData === null || traktData === undefined,
-            traktDataWatched: traktData?.watched?.length ?? 'undefined',
-            traktDataRated: traktData?.rated?.length ?? 'undefined',
-            traktDataHistory: traktData?.history?.length ?? 'undefined',
-          });
-        }
       } else if (hasTraktAuth) {
         logger.info("Trakt filtering disabled for this request", {
           query: searchQuery,
@@ -3956,7 +3179,6 @@ const catalogHandler = async function (args, req) {
         traktUsername,
         numResults: partialCacheContext ? partialCacheContext.gap : numResults,
         totalRequestedResults: numResults,
-        doNotRecommendCount: doNotRecommend.length,
         gapFillMode: !!partialCacheContext,
       });
 
@@ -3968,9 +3190,10 @@ const catalogHandler = async function (args, req) {
         query: searchQuery,
         traktUsername,
         numResults: requestedAgentNumResults,
-        watchedSize: traktWatchedIdSet.size,
-        ratedSize: traktRatedIdSet.size,
-        historySize: traktHistoryIdSet.size,
+        hasTraktAuth,
+        filterWatched,
+        effectiveFilterWatched,
+        hasTraktStatusChecker: typeof traktStatusChecker === "function",
         gapFillMode: !!partialCacheContext,
       });
 
@@ -3982,18 +3205,14 @@ const catalogHandler = async function (args, req) {
           filterWatched: effectiveFilterWatched,
           maxTurns,
           minTmdbRating,
-          traktWatchedIdSet,
-          traktRatedIdSet,
-          traktHistoryIdSet,
+          traktStatusChecker,
           discoveredGenres,
           genreAnalysis: extractGenreCriteria(searchQuery),
-          favoritesContext: filteredTraktData || traktData?.preferences || null,
+          favoritesContext,
           executeTools: (toolCalls, runtimeDeps = {}) =>
             executeAgentTools(toolCalls, {
               ...agentDependencyBundle,
               ...runtimeDeps,
-              traktWatchedFetcher:
-                runtimeDeps.traktWatchedFetcher || fetchTraktWatchedAndRated,
               traktFavoritesFetcher:
                 runtimeDeps.traktFavoritesFetcher || fetchTraktFavorites,
               searchTMDB: runtimeDeps.searchTMDB || agentSearchTMDB,
@@ -4690,7 +3909,6 @@ module.exports = {
   deserializeAllCaches,
   hydrateQueryCounter,
   discoverTypeAndGenres,
-  filterTraktDataByGenres,
   incrementQueryCounter,
   getQueryCount,
   setQueryCount,

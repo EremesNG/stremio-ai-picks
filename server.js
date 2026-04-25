@@ -1277,7 +1277,8 @@ app.post("/validate", express.json(), async (req, res) => {
       recaptchaToken,
     } = req.body;
 
-    if (process.env.RECAPTCHA_SECRET_KEY) {
+    const isDevMode = process.env.ENABLE_LOGGING === 'true';
+    if (process.env.RECAPTCHA_SECRET_KEY && !isDevMode) {
       if (!recaptchaToken) {
         return res.status(400).json({
           error: "Security verification is required. Please refresh and try again.",

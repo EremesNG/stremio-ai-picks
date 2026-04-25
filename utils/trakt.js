@@ -3,7 +3,6 @@ const defaultLogger = require("./logger");
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
-const DEFAULT_LIMIT = 100;
 const PAGINATION_LIMIT = 1000;
 const PAGINATION_MAX_PAGES = 20;
 const PAGINATION_CONCURRENCY = 4;
@@ -112,18 +111,6 @@ function buildTraktUrl(pathname, params = {}) {
   return url.toString();
 }
 
-function normalizeTraktType(type) {
-  if (type === "movie") {
-    return "movies";
-  }
-
-  if (type === "show") {
-    return "shows";
-  }
-
-  return type || "movies";
-}
-
 function extractMedia(item) {
   return item?.movie || item?.show || null;
 }
@@ -137,6 +124,24 @@ function normalizeMediaType(type) {
 
   if (normalizedType === "show" || normalizedType === "series") {
     return "series";
+  }
+
+  return null;
+}
+
+function normalizeCheckerType(type) {
+  const normalizedType = String(type || "").toLowerCase();
+
+  if (normalizedType === "movie" || normalizedType === "movies") {
+    return "movie";
+  }
+
+  if (
+    normalizedType === "show" ||
+    normalizedType === "shows" ||
+    normalizedType === "series"
+  ) {
+    return "show";
   }
 
   return null;
@@ -168,6 +173,53 @@ function normalizeMediaKey(item) {
     title: title === undefined || title === null || title === "" ? null : String(title),
     year,
   };
+}
+
+function normalizeLookupItem(item = {}) {
+  const normalizedItem = normalizeMediaKey(item);
+  const normalizedType = normalizeCheckerType(normalizedItem.type || item?.type);
+
+  return {
+    type: normalizedType,
+    tmdb_id: toIntegerOrNull(normalizedItem.tmdb_id),
+    imdb_id:
+      normalizedItem.imdb_id === undefined || normalizedItem.imdb_id === null || normalizedItem.imdb_id === ""
+        ? null
+        : String(normalizedItem.imdb_id).toLowerCase().trim(),
+    title:
+      normalizedItem.title === undefined || normalizedItem.title === null || normalizedItem.title === ""
+        ? null
+        : String(normalizedItem.title).toLowerCase().trim(),
+    year: toIntegerOrNull(normalizedItem.year),
+  };
+}
+
+function buildStatusCacheKey(type, tmdbId, imdbId, title, year) {
+  const normalizedType = normalizeCheckerType(type) || "unknown";
+  const normalizedTmdb = toIntegerOrNull(tmdbId);
+  const normalizedImdb =
+    imdbId === undefined || imdbId === null || imdbId === ""
+      ? ""
+      : String(imdbId).toLowerCase().trim();
+  const normalizedTitle =
+    title === undefined || title === null || title === ""
+      ? ""
+      : String(title).toLowerCase().trim();
+  const normalizedYear = toIntegerOrNull(year);
+
+  if (normalizedTmdb !== null && normalizedTmdb > 0) {
+    return `${normalizedType}:tmdb:${normalizedTmdb}`;
+  }
+
+  if (normalizedImdb) {
+    return `${normalizedType}:imdb:${normalizedImdb}`;
+  }
+
+  if (normalizedTitle) {
+    return `${normalizedType}:title:${normalizedTitle}:${normalizedYear ?? ""}`;
+  }
+
+  return `${normalizedType}:unknown`;
 }
 
 function normalizeTraktMedia(item) {
@@ -204,8 +256,13 @@ async function fetchTraktCollectionPage(url, deps, operationName) {
 
 async function fetchTraktCollection(pathname, deps, operationName) {
   const userId = getUserId(deps);
+  // Extract type from pathname (e.g., /users/{userId}/watched/shows -> shows)
+  const typeMatch = pathname.match(/\/(watched|ratings|history)\/(\w+)/);
+  const type = typeMatch ? typeMatch[2] : null;
+  // Use noseasons for shows to avoid massive season/episode payloads
+  const extendedParam = type === 'shows' ? 'noseasons' : 'full';
   const baseUrl = buildTraktUrl(pathname.replace("{userId}", encodeURIComponent(userId)), {
-    extended: "full",
+    extended: extendedParam,
   });
   const logger = getLogger(deps);
 
@@ -253,98 +310,263 @@ async function fetchTraktCollection(pathname, deps, operationName) {
   return [firstPageResult.data, ...additionalPages].flat();
 }
 
-async function fetchTraktWatchedAndRatedImpl(deps = {}) {
+
+
+async function fetchTraktIdFromTmdb(deps = {}, normalizedType, tmdbId) {
   const logger = getLogger(deps);
-  const userId = getUserId(deps);
   const traktClientId = deps.traktClientId;
-  const type = normalizeTraktType(deps.type);
-  const cacheKey = `trakt:watched-rated:${userId}:${type}`;
-  const cached = readCache(deps.traktCache, cacheKey, deps.traktCacheTtlMs || DEFAULT_CACHE_TTL_MS);
+  const normalizedTmdbId = toIntegerOrNull(tmdbId);
 
-  if (cached) {
-    return cached;
+  if (!traktClientId || !normalizedType || normalizedTmdbId === null || normalizedTmdbId <= 0) {
+    return null;
   }
 
-  if (!traktClientId) {
-    logger.warn("Missing Trakt client ID for watched/rated fetch", { userId });
-    return { watched: [], rated: [], history: [] };
-  }
+  const url = buildTraktUrl(`/search/tmdb/${normalizedTmdbId}`, {
+    type: normalizedType,
+  });
 
   try {
-    const [watched, rated, history] = await Promise.all([
-      fetchTraktCollection(`/users/{userId}/watched/${type}`, deps, "Trakt watched fetch"),
-      fetchTraktCollection(`/users/{userId}/ratings/${type}`, deps, "Trakt rated fetch"),
-      fetchTraktCollection(`/users/{userId}/history/${type}`, deps, "Trakt history fetch"),
-    ]);
+    const responseData = await fetchJson(
+      url,
+      buildTraktHeaders(deps),
+      logger,
+      "Trakt TMDB->Trakt ID lookup"
+    );
 
-    const result = {
-      watched: Array.isArray(watched) ? watched : [],
-      rated: Array.isArray(rated) ? rated : [],
-      history: Array.isArray(history) ? history : [],
-    };
+    const rows = Array.isArray(responseData) ? responseData : [];
+    for (const row of rows) {
+      const media = normalizedType === "movie" ? row?.movie : row?.show;
+      const traktId = toIntegerOrNull(media?.ids?.trakt);
+      if (traktId !== null && traktId > 0) {
+        return traktId;
+      }
+    }
 
-    writeCache(deps.traktCache, cacheKey, result);
-
-    return result;
+    return null;
   } catch (error) {
-    logger.error("Failed to fetch Trakt watched/rated/history", {
-      error: error.message,
-      status: error.status,
-      userId,
+    logger.warn("Failed Trakt TMDB->Trakt lookup", {
+      error: error?.message,
+      status: error?.status,
+      type: normalizedType,
+      tmdbId: normalizedTmdbId,
     });
-
-    return { watched: [], rated: [], history: [] };
+    return null;
   }
 }
 
-function isItemWatchedOrRatedImpl(deps = {}, item) {
-  if (!item) {
+function normalizeHistoryType(type) {
+  if (type === "movie") {
+    return "movies";
+  }
+
+  if (type === "show") {
+    return "shows";
+  }
+
+  return null;
+}
+
+async function fetchHistoryStatusByTraktId(deps = {}, normalizedType, traktId) {
+  const logger = getLogger(deps);
+  const traktClientId = deps.traktClientId;
+  const normalizedTraktId = toIntegerOrNull(traktId);
+  const historyType = normalizeHistoryType(normalizedType);
+
+  if (!traktClientId || !historyType || normalizedTraktId === null || normalizedTraktId <= 0) {
     return false;
   }
 
-  const normalizedItem = normalizeMediaKey(item);
-  const normalizedName = String(normalizedItem.title || "").toLowerCase().trim();
-  const itemYear = normalizedItem.year;
-  const itemType = normalizedItem.type;
-  const watchHistory = deps.watchHistory || [];
-  const ratedItems = deps.ratedItems || [];
+  const url = buildTraktUrl(`/sync/history/${historyType}/${normalizedTraktId}`);
 
-  const matches = (collection) =>
-    Array.isArray(collection) &&
-    collection.some((entry) => {
-      const media = normalizeMediaKey(entry);
-      if (!media.title) {
-        return false;
-      }
+  try {
+    const responseData = await fetchJson(
+      url,
+      buildTraktHeaders(deps),
+      logger,
+      "Trakt per-item history check"
+    );
 
-      if (itemType && media.type && itemType !== media.type) {
-        return false;
-      }
+    return Array.isArray(responseData) && responseData.length > 0;
+  } catch (error) {
+    logger.warn("Failed Trakt per-item history check", {
+      error: error?.message,
+      status: error?.status,
+      type: normalizedType,
+      traktId: normalizedTraktId,
+    });
+    return false;
+  }
+}
 
-      const historyName = String(media.title).toLowerCase().trim();
-      const historyYear = media.year;
+async function resolveTraktIdForLookup(deps = {}, lookup = {}) {
+  const normalizedType = normalizeCheckerType(lookup.type);
+  const tmdbId = toIntegerOrNull(lookup.tmdb_id);
 
-      return normalizedName === historyName && (!itemYear || !historyYear || itemYear === historyYear);
+  if (!normalizedType || tmdbId === null || tmdbId <= 0) {
+    return null;
+  }
+
+  const idCache = deps.tmdbToTraktIdCache;
+  const idPromiseCache = deps.tmdbToTraktIdPromiseCache;
+  const cacheKey = `${normalizedType}:tmdb:${tmdbId}`;
+
+  if (idCache && idCache.has(cacheKey)) {
+    return idCache.get(cacheKey);
+  }
+
+  if (idPromiseCache && idPromiseCache.has(cacheKey)) {
+    return idPromiseCache.get(cacheKey);
+  }
+
+  const lookupPromise = fetchTraktIdFromTmdb(deps, normalizedType, tmdbId).finally(() => {
+    if (idPromiseCache) {
+      idPromiseCache.delete(cacheKey);
+    }
+  });
+
+  if (idPromiseCache) {
+    idPromiseCache.set(cacheKey, lookupPromise);
+  }
+
+  const traktId = await lookupPromise;
+
+  if (idCache) {
+    idCache.set(cacheKey, traktId);
+  }
+
+  return traktId;
+}
+
+function normalizeCheckerInput(tmdbIdOrItem, imdbId, type) {
+  if (tmdbIdOrItem && typeof tmdbIdOrItem === "object" && !Array.isArray(tmdbIdOrItem)) {
+    const item = tmdbIdOrItem;
+    const sourceItem = item.item && typeof item.item === "object" ? item.item : item;
+    const normalized = normalizeLookupItem({
+      ...sourceItem,
+      type: item.type ?? sourceItem.type,
+      title: item.title ?? sourceItem.title,
+      year: item.year ?? sourceItem.year,
+      tmdb_id: item.tmdb_id ?? item.tmdbId ?? sourceItem.tmdb_id ?? sourceItem.tmdbId,
+      imdb_id: item.imdb_id ?? item.imdbId ?? sourceItem.imdb_id ?? sourceItem.imdbId,
+      ids: item.ids || sourceItem.ids,
+      movie: item.movie || sourceItem.movie,
+      show: item.show || sourceItem.show,
     });
 
-  return matches(watchHistory) || matches(ratedItems);
-}
-
-async function fetchTraktWatchedAndRated(deps = {}) {
-  if (typeof deps.fetchTraktWatchedAndRated === "function" && deps.fetchTraktWatchedAndRated !== fetchTraktWatchedAndRated) {
-    return deps.fetchTraktWatchedAndRated(deps);
+    return {
+      type: normalizeCheckerType(item.type || normalized.type),
+      tmdb_id: normalized.tmdb_id,
+      imdb_id: normalized.imdb_id,
+      title: normalized.title,
+      year: normalized.year,
+    };
   }
 
-  return fetchTraktWatchedAndRatedImpl(deps);
+  return {
+    type: normalizeCheckerType(type),
+    tmdb_id: toIntegerOrNull(tmdbIdOrItem),
+    imdb_id:
+      imdbId === undefined || imdbId === null || imdbId === ""
+        ? null
+        : String(imdbId).toLowerCase().trim(),
+    title: null,
+    year: null,
+  };
 }
 
-function isItemWatchedOrRated(deps = {}, item) {
-  if (typeof deps.isItemWatchedOrRated === "function" && deps.isItemWatchedOrRated !== isItemWatchedOrRated) {
-    return deps.isItemWatchedOrRated(deps, item);
+
+
+async function getTraktItemStatusImpl(deps = {}, input = {}) {
+  const lookup = normalizeCheckerInput(input);
+  const normalizedType = normalizeCheckerType(lookup.type);
+
+  if (!normalizedType) {
+    return { history: false };
   }
 
-  return isItemWatchedOrRatedImpl(deps, item);
+  const cacheStore = deps.statusCache && typeof deps.statusCache.get === "function" && typeof deps.statusCache.set === "function"
+    ? deps.statusCache
+    : null;
+  const promiseCache =
+    deps.statusPromiseCache &&
+    typeof deps.statusPromiseCache.get === "function" &&
+    typeof deps.statusPromiseCache.set === "function" &&
+    typeof deps.statusPromiseCache.delete === "function"
+      ? deps.statusPromiseCache
+      : null;
+
+  const cacheKey = buildStatusCacheKey(
+    normalizedType,
+    lookup.tmdb_id,
+    lookup.imdb_id,
+    lookup.title,
+    lookup.year
+  );
+
+  if (cacheStore && cacheStore.has(cacheKey)) {
+    return cacheStore.get(cacheKey);
+  }
+
+  if (promiseCache && promiseCache.has(cacheKey)) {
+    return promiseCache.get(cacheKey);
+  }
+
+  const statusPromise = (async () => {
+    const traktId = await resolveTraktIdForLookup(deps, lookup);
+    const history = await fetchHistoryStatusByTraktId(deps, normalizedType, traktId);
+    const status = { history };
+
+    if (cacheStore) {
+      cacheStore.set(cacheKey, status);
+    }
+
+    return status;
+  })().finally(() => {
+    if (promiseCache) {
+      promiseCache.delete(cacheKey);
+    }
+  });
+
+  if (promiseCache) {
+    promiseCache.set(cacheKey, statusPromise);
+  }
+
+  return statusPromise;
 }
+
+function createTraktStatusChecker(deps = {}) {
+  const statusCache = deps.statusCache || new Map();
+  const statusPromiseCache = deps.statusPromiseCache || new Map();
+  const tmdbToTraktIdCache = deps.tmdbToTraktIdCache || new Map();
+  const tmdbToTraktIdPromiseCache = deps.tmdbToTraktIdPromiseCache || new Map();
+  const checkerDeps = {
+    ...deps,
+    statusCache,
+    statusPromiseCache,
+    tmdbToTraktIdCache,
+    tmdbToTraktIdPromiseCache,
+  };
+
+  const checkStatus = async (tmdbIdOrInput, imdbId, type) => {
+    const input = normalizeCheckerInput(tmdbIdOrInput, imdbId, type);
+    return getTraktItemStatusImpl(checkerDeps, input);
+  };
+
+  checkStatus.checkStatus = checkStatus;
+  checkStatus.getStatus = checkStatus;
+  return checkStatus;
+}
+
+async function getTraktItemStatus(tmdbId, imdbId, type, traktAccessToken, deps = {}) {
+  const checker = createTraktStatusChecker({
+    ...deps,
+    traktAccessToken: traktAccessToken || deps.traktAccessToken,
+  });
+
+  return checker(tmdbId, imdbId, type);
+}
+
+
 
 async function fetchTraktFavorites(deps = {}) {
   const logger = getLogger(deps);
@@ -391,8 +613,8 @@ async function fetchTraktFavorites(deps = {}) {
 }
 
 module.exports = {
-  fetchTraktWatchedAndRated,
-  isItemWatchedOrRated,
   fetchTraktFavorites,
+  createTraktStatusChecker,
+  getTraktItemStatus,
   normalizeMediaKey,
 };
