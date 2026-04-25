@@ -172,9 +172,518 @@ function formatTitleList(items = []) {
     .join(", ");
 }
 
-function formatContextValue(value) {
+const MAX_FAVORITES_SUMMARY_ENTRIES = 5;
+const FALLBACK_CONTEXT_MAX_CHARS = 700;
+
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function toFiniteNumber(value) {
+  const normalized = typeof value === "string" ? Number(value) : value;
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function formatOneDecimal(value) {
+  const normalized = toFiniteNumber(value);
+  return normalized === null ? null : normalized.toFixed(1);
+}
+
+function truncateText(text, maxChars = FALLBACK_CONTEXT_MAX_CHARS) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxChars)}... (truncated)`;
+}
+
+function parseJsonIfPossible(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function toPreferenceEntries(source, labelKey) {
+  if (!source) {
+    return [];
+  }
+
+  if (source instanceof Map) {
+    return Array.from(source.entries())
+      .map(([label, count]) => {
+        const normalizedLabel = String(label || "").trim();
+        const normalizedCount = toFiniteNumber(count);
+        if (!normalizedLabel || normalizedCount === null || normalizedCount <= 0) {
+          return null;
+        }
+
+        return {
+          label: normalizedLabel,
+          count: normalizedCount,
+          avgRating: null,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  if (Array.isArray(source)) {
+    return source
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+
+        const label = String(entry[labelKey] || entry.name || entry.label || "").trim();
+        const count = toFiniteNumber(entry.count) ?? 0;
+        const avgRating =
+          toFiniteNumber(entry.avgRating) ??
+          toFiniteNumber(entry.averageRating) ??
+          (toFiniteNumber(entry.totalRating) !== null && count > 0
+            ? toFiniteNumber(entry.totalRating) / count
+            : null);
+
+        if (!label || count <= 0) {
+          return null;
+        }
+
+        return { label, count, avgRating };
+      })
+      .filter(Boolean);
+  }
+
+  if (!isPlainObject(source)) {
+    return [];
+  }
+
+  return Object.entries(source)
+    .map(([label, details]) => {
+      const normalizedLabel = String(label || "").trim();
+      if (!normalizedLabel) {
+        return null;
+      }
+
+      if (typeof details === "number") {
+        if (!Number.isFinite(details) || details <= 0) {
+          return null;
+        }
+
+        return { label: normalizedLabel, count: details, avgRating: null };
+      }
+
+      if (!details || typeof details !== "object") {
+        return null;
+      }
+
+      const count = toFiniteNumber(details.count) ?? 0;
+      const avgRating =
+        toFiniteNumber(details.avgRating) ??
+        toFiniteNumber(details.averageRating) ??
+        (toFiniteNumber(details.totalRating) !== null && count > 0
+          ? toFiniteNumber(details.totalRating) / count
+          : null);
+
+      if (count <= 0) {
+        return null;
+      }
+
+      return { label: normalizedLabel, count, avgRating };
+    })
+    .filter(Boolean);
+}
+
+function summarizeTopPreferenceEntries(source, {
+  labelKey,
+  includeAvgRating = false,
+  maxEntries = MAX_FAVORITES_SUMMARY_ENTRIES,
+} = {}) {
+  const entries = toPreferenceEntries(source, labelKey)
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+
+      return a.label.localeCompare(b.label);
+    })
+    .slice(0, maxEntries);
+
+  if (!entries.length) {
+    return "";
+  }
+
+  return entries
+    .map((entry) => {
+      const countLabel = `${entry.count} ${entry.count === 1 ? "title" : "titles"}`;
+      if (!includeAvgRating) {
+        return `${entry.label} (${countLabel})`;
+      }
+
+      const avgRating = formatOneDecimal(entry.avgRating);
+      return avgRating
+        ? `${entry.label} (avg ${avgRating}, ${countLabel})`
+        : `${entry.label} (${countLabel})`;
+    })
+    .join(", ");
+}
+
+function summarizeYearRange(yearRange, fallbackYears = []) {
+  const yearValues = fallbackYears
+    .map((value) => normalizeFeedbackYear(value))
+    .filter((value) => value !== null);
+
+  const minFromYears = yearValues.length ? Math.min(...yearValues) : null;
+  const maxFromYears = yearValues.length ? Math.max(...yearValues) : null;
+
+  const minYear =
+    isPlainObject(yearRange) && toFiniteNumber(yearRange.min) !== null
+      ? Math.trunc(toFiniteNumber(yearRange.min))
+      : isPlainObject(yearRange) && toFiniteNumber(yearRange.start) !== null
+        ? Math.trunc(toFiniteNumber(yearRange.start))
+        : minFromYears;
+
+  const maxYear =
+    isPlainObject(yearRange) && toFiniteNumber(yearRange.max) !== null
+      ? Math.trunc(toFiniteNumber(yearRange.max))
+      : isPlainObject(yearRange) && toFiniteNumber(yearRange.end) !== null
+        ? Math.trunc(toFiniteNumber(yearRange.end))
+        : maxFromYears;
+
+  const preferredYear =
+    isPlainObject(yearRange) && toFiniteNumber(yearRange.preferred) !== null
+      ? Math.trunc(toFiniteNumber(yearRange.preferred))
+      : null;
+
+  if (!minYear && !maxYear && !preferredYear) {
+    return "";
+  }
+
+  const rangeLabel =
+    minYear && maxYear
+      ? minYear === maxYear
+        ? String(minYear)
+        : `${minYear}-${maxYear}`
+      : minYear
+        ? `${minYear}+`
+        : maxYear
+          ? `up to ${maxYear}`
+          : "";
+
+  if (rangeLabel && preferredYear) {
+    return `${rangeLabel} (peak around ${preferredYear})`;
+  }
+
+  return rangeLabel || String(preferredYear);
+}
+
+function toRatingsEntries(ratings) {
+  if (!ratings) {
+    return [];
+  }
+
+  if (Array.isArray(ratings)) {
+    return ratings
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+
+        const rating = toFiniteNumber(entry.rating);
+        const count = toFiniteNumber(entry.count);
+        if (rating === null || count === null || count <= 0) {
+          return null;
+        }
+
+        return { rating, count };
+      })
+      .filter(Boolean);
+  }
+
+  if (!isPlainObject(ratings)) {
+    return [];
+  }
+
+  return Object.entries(ratings)
+    .map(([rating, countOrDetails]) => {
+      const normalizedRating = toFiniteNumber(rating);
+      if (normalizedRating === null) {
+        return null;
+      }
+
+      const count =
+        typeof countOrDetails === "number"
+          ? toFiniteNumber(countOrDetails)
+          : toFiniteNumber(countOrDetails?.count);
+
+      if (count === null || count <= 0) {
+        return null;
+      }
+
+      return { rating: normalizedRating, count };
+    })
+    .filter(Boolean);
+}
+
+function summarizeRatingsDistribution(ratings) {
+  const entries = toRatingsEntries(ratings);
+  if (!entries.length) {
+    return "";
+  }
+
+  const total = entries.reduce((sum, entry) => sum + entry.count, 0);
+  if (!total) {
+    return "";
+  }
+
+  const weightedAvg =
+    entries.reduce((sum, entry) => sum + entry.rating * entry.count, 0) / total;
+  const weightedAvgLabel = formatOneDecimal(weightedAvg) || "n/a";
+  const distribution = entries
+    .sort((a, b) => b.rating - a.rating)
+    .slice(0, MAX_FAVORITES_SUMMARY_ENTRIES)
+    .map((entry) => `${entry.rating}: ${entry.count}`)
+    .join(", ");
+
+  return `avg ${weightedAvgLabel}; distribution ${distribution}`;
+}
+
+function extractRawFavoritesItems(favoritesContext) {
+  if (Array.isArray(favoritesContext)) {
+    return favoritesContext;
+  }
+
+  if (!isPlainObject(favoritesContext)) {
+    return [];
+  }
+
+  const candidates = [
+    favoritesContext.recentlyWatched,
+    favoritesContext.highlyRated,
+    favoritesContext.lowRated,
+    favoritesContext.watched,
+    favoritesContext.rated,
+    favoritesContext.history,
+    favoritesContext.items,
+  ];
+
+  return candidates.flatMap((value) => (Array.isArray(value) ? value : []));
+}
+
+function summarizeRawFavoritesContext(favoritesContext) {
+  const items = extractRawFavoritesItems(favoritesContext);
+  if (!items.length) {
+    return "";
+  }
+
+  const genres = new Map();
+  const actors = new Map();
+  const directors = new Map();
+  const years = [];
+  const ratings = [];
+
+  items.forEach((item) => {
+    const media = item?.movie || item?.show || item;
+    if (!media || typeof media !== "object") {
+      return;
+    }
+
+    toArray(media.genres).forEach((genre) => {
+      const normalized = String(genre || "").trim();
+      if (!normalized) {
+        return;
+      }
+      genres.set(normalized, (genres.get(normalized) || 0) + 1);
+    });
+
+    toArray(media.cast)
+      .map((actor) => (actor && typeof actor === "object" ? actor.name : actor))
+      .forEach((actorName) => {
+        const normalized = String(actorName || "").trim();
+        if (!normalized) {
+          return;
+        }
+        actors.set(normalized, (actors.get(normalized) || 0) + 1);
+      });
+
+    toArray(media.crew)
+      .filter(
+        (person) =>
+          person &&
+          typeof person === "object" &&
+          String(person.job || "").toLowerCase() === "director"
+      )
+      .forEach((person) => {
+        const normalized = String(person.name || "").trim();
+        if (!normalized) {
+          return;
+        }
+        directors.set(normalized, (directors.get(normalized) || 0) + 1);
+      });
+
+    const year = normalizeFeedbackYear(media.year);
+    if (year !== null) {
+      years.push(year);
+    }
+
+    const rating = toFiniteNumber(item?.rating);
+    if (rating !== null) {
+      ratings.push(rating);
+    }
+  });
+
+  const ratingsDistribution = ratings.reduce((acc, rating) => {
+    const key = String(Math.round(rating));
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const lines = [];
+  const genreSummary = summarizeTopPreferenceEntries(genres, {
+    labelKey: "genre",
+    includeAvgRating: false,
+  });
+  const actorSummary = summarizeTopPreferenceEntries(actors, {
+    labelKey: "actor",
+  });
+  const directorSummary = summarizeTopPreferenceEntries(directors, {
+    labelKey: "director",
+  });
+  const yearSummary = summarizeYearRange(null, years);
+  const ratingSummary = summarizeRatingsDistribution(ratingsDistribution);
+
+  if (genreSummary) {
+    lines.push(`Favorite genres: ${genreSummary}`);
+  }
+
+  if (actorSummary) {
+    lines.push(`Preferred actors: ${actorSummary}`);
+  }
+
+  if (directorSummary) {
+    lines.push(`Preferred directors: ${directorSummary}`);
+  }
+
+  if (yearSummary) {
+    lines.push(`Preferred year range: ${yearSummary}`);
+  }
+
+  if (ratingSummary) {
+    lines.push(`Rating profile: ${ratingSummary}`);
+  }
+
+  if (lines.length) {
+    return lines.join(" | ");
+  }
+
+  try {
+    return truncateText(JSON.stringify(items));
+  } catch {
+    return truncateText(String(favoritesContext));
+  }
+}
+
+function summarizeFavoritesPreferences(favoritesContext) {
+  if (!isPlainObject(favoritesContext)) {
+    return "";
+  }
+
+  const hasPreferenceShape =
+    favoritesContext.genres ||
+    favoritesContext.actors ||
+    favoritesContext.directors ||
+    favoritesContext.yearRange ||
+    favoritesContext.ratings;
+
+  if (!hasPreferenceShape) {
+    return "";
+  }
+
+  const lines = [];
+  const genreSummary = summarizeTopPreferenceEntries(favoritesContext.genres, {
+    labelKey: "genre",
+    includeAvgRating: true,
+  });
+  const actorSummary = summarizeTopPreferenceEntries(favoritesContext.actors, {
+    labelKey: "actor",
+  });
+  const directorSummary = summarizeTopPreferenceEntries(favoritesContext.directors, {
+    labelKey: "director",
+  });
+  const yearSummary = summarizeYearRange(favoritesContext.yearRange);
+  const ratingSummary = summarizeRatingsDistribution(favoritesContext.ratings);
+
+  if (genreSummary) {
+    lines.push(`Favorite genres: ${genreSummary}`);
+  }
+
+  if (actorSummary) {
+    lines.push(`Preferred actors: ${actorSummary}`);
+  }
+
+  if (directorSummary) {
+    lines.push(`Preferred directors: ${directorSummary}`);
+  }
+
+  if (yearSummary) {
+    lines.push(`Preferred year range: ${yearSummary}`);
+  }
+
+  if (ratingSummary) {
+    lines.push(`Rating profile: ${ratingSummary}`);
+  }
+
+  return lines.join(" | ");
+}
+
+function summarizeFavoritesContext(value) {
+  const normalized = parseJsonIfPossible(value);
+
+  if (normalized == null || normalized === "") {
+    return "";
+  }
+
+  if (typeof normalized === "string") {
+    return truncateText(normalized);
+  }
+
+  const preferenceSummary = summarizeFavoritesPreferences(normalized);
+  if (preferenceSummary) {
+    return preferenceSummary;
+  }
+
+  const rawSummary = summarizeRawFavoritesContext(normalized);
+  if (rawSummary) {
+    return rawSummary;
+  }
+
+  try {
+    return truncateText(JSON.stringify(normalized));
+  } catch {
+    return truncateText(String(normalized));
+  }
+}
+
+function formatContextValue(value, { contextType = "generic" } = {}) {
   if (value == null || value === "") {
     return "";
+  }
+
+  if (contextType === "favorites") {
+    return summarizeFavoritesContext(value);
   }
 
   if (typeof value === "string") {
@@ -208,7 +717,9 @@ function buildTurnMessage(ctx = {}) {
       : {};
   const discoveredGenres = formatTitleList(ctx.discoveredGenres);
   const genreAnalysis = formatContextValue(ctx.genreAnalysis);
-  const favoritesContext = formatContextValue(ctx.favoritesContext);
+  const favoritesContext = formatContextValue(ctx.favoritesContext, {
+    contextType: "favorites",
+  });
   const rejectionBucketOrder = [
     "watched",
     "rated",

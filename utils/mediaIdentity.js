@@ -1,21 +1,60 @@
 const { normalizeMediaKey } = require("./trakt");
 
+function normalizeIdentityType(type) {
+  const normalizedType = String(type || "").toLowerCase().trim();
+
+  if (normalizedType === "movie" || normalizedType === "movies") {
+    return "movie";
+  }
+
+  if (
+    normalizedType === "show" ||
+    normalizedType === "shows" ||
+    normalizedType === "series"
+  ) {
+    return "show";
+  }
+
+  return null;
+}
+
+function normalizeIdentityInteger(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeIdentityString(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const normalized = String(value).toLowerCase().trim();
+  return normalized || null;
+}
+
 function buildMediaIdentityKeys(item) {
   const normalized = normalizeMediaKey(item);
+  const normalizedType = normalizeIdentityType(normalized.type);
+  const normalizedTmdbId = normalizeIdentityInteger(normalized.tmdb_id);
+  const normalizedImdbId = normalizeIdentityString(normalized.imdb_id);
+  const normalizedTitle = normalizeIdentityString(normalized.title);
+  const normalizedYear = normalizeIdentityInteger(normalized.year);
   const keys = [];
 
-  if (normalized.type && normalized.tmdb_id != null) {
-    keys.push(`tmdb:${normalized.type}:${normalized.tmdb_id}`);
+  if (normalizedType && normalizedTmdbId != null) {
+    keys.push(`tmdb:${normalizedType}:${normalizedTmdbId}`);
   }
 
-  if (normalized.imdb_id) {
-    keys.push(`imdb:${normalized.imdb_id}`);
+  if (normalizedImdbId) {
+    keys.push(`imdb:${normalizedImdbId}`);
   }
 
-  if (normalized.title) {
-    keys.push(
-      `title:${normalized.type || ""}:${normalized.title.trim().toLowerCase()}:${normalized.year ?? ""}`
-    );
+  if (normalizedTitle) {
+    keys.push(`title:${normalizedTitle}:${normalizedYear ?? ""}:${normalizedType || ""}`);
   }
 
   return [...new Set(keys)].filter(Boolean);

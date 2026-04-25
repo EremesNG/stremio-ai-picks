@@ -1,0 +1,105 @@
+# Tasks: Trakt Lazy Filter and Prompt Optimization
+
+## Phase 1: Foundation
+- [x] 1.1 Define lazy Trakt filtering boundaries and dependency contract in `addon.js` and `utils/agent.js` (remove bulk-filter input assumptions, keep `filterWatched` gate semantics unchanged).
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 1.2 Introduce/align per-item Trakt status helper surface in `utils/trakt.js` (watched/rated/history check API over TMDB-resolved identities, reusing existing primitives where valid).
+  - Verification:
+    - Run: `node -c utils/trakt.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 1.3 Align identity-key construction rules for lazy checks in `utils/mediaIdentity.js` (stable key parity for `tmdb`, `imdb`, and normalized title/year/type paths).
+  - Verification:
+    - Run: `node -c utils/mediaIdentity.js`
+    - Expected: exits 0 with no syntax errors
+
+## Phase 2: Workstream A — Lazy per-item Trakt filtering
+- [x] 2.1 Remove bulk watched/rated/history prefetch orchestration from recommendation filtering path in `addon.js` (do not construct bulk identity sets for turn filtering).
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 2.2 Implement orchestrator-side post-TMDB status evaluation in `utils/agent.js` (`resolveValidatedItems`/turn pipeline must perform per-item Trakt checks only after candidate resolution).
+  - Verification:
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 2.3 Add bounded request/session caching for per-item status lookups in `utils/agent.js` + `utils/trakt.js` (avoid repeated checks across turns and duplicate proposals).
+  - Verification:
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/trakt.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 2.4 Preserve `filterWatched=false` behavior in `utils/agent.js` and call sites in `addon.js` (skip Trakt status checks and exclusions when disabled).
+  - Verification:
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 2.5 Keep rejection taxonomy and contracts stable in `utils/agent.js` (`watched`, `rated`, `history`, `duplicate`, `typeMismatch`, `notFound`) while sourcing Trakt decisions from lazy checks.
+  - Verification:
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 2.6 Ensure `utils/trakt.js` no longer performs bulk paginated watched/ratings/history fetches solely for agent-turn filtering; retain required collection fetches for other flows only.
+  - Verification:
+    - Run: `node -c utils/trakt.js`
+    - Expected: exits 0 with no syntax errors
+
+## Phase 3: Workstream B — Compact favorites context
+- [x] 3.1 Replace raw favorites JSON prompt payload in `utils/prompts.js` (`formatContextValue`, `buildTurnMessage`, `Favorites context:` line) with compact preference summary rendering.
+  - Verification:
+    - Run: `node -c utils/prompts.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 3.2 Rewire favorites-context inputs in `addon.js` to pass compact preference-level context (`preferences`/summary) instead of large raw watched/rated arrays.
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 3.3 Ensure `get_user_favorites` tool contract and round-trip behavior remain unchanged while prompt context is compacted (`utils/agent.js`, `utils/agent-tools.js`, `utils/prompts.js`).
+  - Verification:
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent-tools.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/prompts.js`
+    - Expected: exits 0 with no syntax errors
+
+## Phase 4: Integration and Verification
+- [x] 4.1 Validate end-to-end Trakt-authenticated recommendation path wiring across `addon.js`, `utils/agent.js`, `utils/trakt.js`, `utils/prompts.js`, and `utils/mediaIdentity.js` for lazy filtering + compact context.
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/trakt.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/prompts.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/mediaIdentity.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 4.2 Verify telemetry/log parity for success criteria in `addon.js` and `utils/agent.js` (no bulk prefetch-for-filter logs, stable rejection buckets, unchanged recommendation return contract).
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 4.3 Regression-check non-filtered flows: unauthenticated users and `filterWatched=false` requests remain operational without Trakt exclusion side effects (`addon.js`, `utils/agent.js`).
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+- [x] 4.4 Final syntax sweep of all touched modules before handoff.
+  - Verification:
+    - Run: `node -c addon.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/trakt.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/prompts.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/mediaIdentity.js`
+    - Expected: exits 0 with no syntax errors
+    - Run: `node -c utils/agent-tools.js`
+    - Expected: exits 0 with no syntax errors
