@@ -16,6 +16,7 @@ const { normalizeMediaKey } = require("./trakt");
 
 const DEFAULT_MAX_TURNS = 6;
 const DEFAULT_MAX_TOOL_ROUNDS_PER_TURN = 8;
+const LOOP_TIMEOUT_MS = 240_000;
 const OVERFETCH_FACTOR = 1.5;
 
 const FUNCTION_CALLING_UNSUPPORTED_PATTERNS = [
@@ -791,6 +792,7 @@ async function runAgentLoop(dependencies = {}) {
 
   const startTime = Date.now();
   let turns = 0;
+  let reason = null;
   let toolCalls = 0;
   let collected = [];
   let proposedTitles = [];
@@ -812,6 +814,7 @@ async function runAgentLoop(dependencies = {}) {
   let droppedCollectedTotal = 0;
   let droppedProposedTotal = 0;
   let droppedDuplicatesTotal = 0;
+  let droppedHistoryTotal = 0;
   let droppedRatedTotal = 0;
   let droppedLowRatingTotal = 0;
   let discoverCallsTotal = 0;
@@ -859,6 +862,7 @@ async function runAgentLoop(dependencies = {}) {
         droppedCollected: droppedCollectedTotal,
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
+        droppedHistory: droppedHistoryTotal,
         droppedLowRating: droppedLowRatingTotal,
         discoverCalls: discoverCallsTotal,
         trendingCalls: trendingCallsTotal,
@@ -877,6 +881,7 @@ async function runAgentLoop(dependencies = {}) {
         droppedCollected: droppedCollectedTotal,
         droppedProposed: droppedProposedTotal,
         droppedRated: droppedRatedTotal,
+        droppedHistory: droppedHistoryTotal,
         droppedLowRating: droppedLowRatingTotal,
         discoverCalls: discoverCallsTotal,
         trendingCalls: trendingCallsTotal,
@@ -1521,6 +1526,17 @@ if (hasText) {
 
   for (let turn = 1; turn <= maxTurns; turn += 1) {
     turns = turn;
+    const elapsed = Date.now() - startTime;
+    if (elapsed > LOOP_TIMEOUT_MS) {
+      reason = "loop_timeout";
+      logger.warn("Agent loop timeout", {
+        elapsed,
+        collected: collected.length,
+        turns,
+      });
+      break;
+    }
+
     logger.debug("Agent turn", { turn: turns, maxTurns });
     logger.agent("TURN_START", { turn: turns, collectedSoFar: collected.length });
 
@@ -1604,6 +1620,7 @@ if (hasText) {
     droppedCollectedTotal += turnFilter.droppedCollectedCount || 0;
     droppedProposedTotal += turnFilter.droppedProposedCount || 0;
     droppedWatchedTotal += turnFilter.droppedWatchedCount || 0;
+    droppedHistoryTotal += turnFilter.droppedHistoryCount || 0;
     droppedRatedTotal += turnFilter.droppedRatedCount || 0;
     droppedLowRatingTotal += turnFilter.droppedLowRatingCount || 0;
     droppedDuplicatesTotal +=
@@ -1663,6 +1680,10 @@ if (hasText) {
 
       continue;
     }
+  }
+
+  if (reason === "loop_timeout") {
+    return finalizeResult(collected.length > 0, collected, reason);
   }
 
   if (collected.length > 0) {

@@ -6,6 +6,7 @@ const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
 const PAGINATION_LIMIT = 1000;
 const PAGINATION_MAX_PAGES = 20;
 const PAGINATION_CONCURRENCY = 4;
+const TRAKT_REQUEST_TIMEOUT_MS = 5000;
 
 function getLogger(deps = {}) {
   return deps.logger || defaultLogger || console;
@@ -73,19 +74,62 @@ function writeCache(cache, key, data) {
 async function fetchResponse(url, headers, logger, operationName) {
   return withRetry(
     async () => {
-      const response = await fetch(url, { headers });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TRAKT_REQUEST_TIMEOUT_MS);
 
-      if (!response.ok) {
-        const error = new Error(`Trakt request failed with status ${response.status}`);
-        error.status = response.status;
-        error.body = await response.text().catch(() => "");
+      try {
+        const response = await fetch(url, { headers, signal: controller.signal });
+
+        let parsedRateLimit = null;
+        const rateLimitHeader = response.headers?.get("X-Ratelimit");
+        if (rateLimitHeader) {
+          try {
+            parsedRateLimit = JSON.parse(rateLimitHeader);
+            const limit = toIntegerOrNull(parsedRateLimit?.limit) ?? "?";
+            const remaining = toIntegerOrNull(parsedRateLimit?.remaining) ?? "?";
+            const period = toIntegerOrNull(parsedRateLimit?.period) ?? "?";
+            const rateLimitMessage = `Trakt rate limit: remaining=${remaining}/${limit} period=${period}s`;
+            if (typeof remaining === "number" && remaining < 100) {
+              logger.warn(rateLimitMessage);
+            } else {
+              logger.debug(rateLimitMessage);
+            }
+          } catch (_error) {
+            logger.debug("Failed to parse Trakt X-Ratelimit header", {
+              url,
+              value: rateLimitHeader,
+            });
+          }
+        }
+
+        if (!response.ok) {
+          const error = new Error(`Trakt request failed with status ${response.status}`);
+          error.status = response.status;
+          error.body = await response.text().catch(() => "");
+          throw error;
+        }
+
+        if (parsedRateLimit) {
+          response.traktRateLimit = parsedRateLimit;
+        }
+
+        return response;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          const timeoutMessage = `Trakt API timeout after ${TRAKT_REQUEST_TIMEOUT_MS}ms: ${url}`;
+          logger.warn(timeoutMessage);
+          const timeoutError = new Error(timeoutMessage);
+          timeoutError.isTimeout = true;
+          throw timeoutError;
+        }
+
         throw error;
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      return response;
     },
     {
-      maxRetries: 3,
+      maxRetries: 1,
       initialDelay: 1000,
       maxDelay: 10000,
       shouldRetry: (error) => !error.status || error.status === 429 || error.status >= 500,
@@ -371,6 +415,7 @@ async function fetchHistoryStatusByTraktId(deps = {}, normalizedType, traktId) {
   const traktClientId = deps.traktClientId;
   const normalizedTraktId = toIntegerOrNull(traktId);
   const historyType = normalizeHistoryType(normalizedType);
+  const startTime = Date.now();
 
   if (!traktClientId || !historyType || normalizedTraktId === null || normalizedTraktId <= 0) {
     return false;
@@ -386,7 +431,9 @@ async function fetchHistoryStatusByTraktId(deps = {}, normalizedType, traktId) {
       "Trakt per-item history check"
     );
 
-    return Array.isArray(responseData) && responseData.length > 0;
+    const found = Array.isArray(responseData) && responseData.length > 0;
+    logger.debug(`Trakt history check: type=${normalizedType} traktId=${normalizedTraktId} found=${found} duration=${Date.now() - startTime}ms`);
+    return found;
   } catch (error) {
     logger.warn("Failed Trakt per-item history check", {
       error: error?.message,
@@ -401,6 +448,7 @@ async function fetchHistoryStatusByTraktId(deps = {}, normalizedType, traktId) {
 async function resolveTraktIdForLookup(deps = {}, lookup = {}) {
   const normalizedType = normalizeCheckerType(lookup.type);
   const tmdbId = toIntegerOrNull(lookup.tmdb_id);
+  const startTime = Date.now();
 
   if (!normalizedType || tmdbId === null || tmdbId <= 0) {
     return null;
@@ -433,6 +481,9 @@ async function resolveTraktIdForLookup(deps = {}, lookup = {}) {
   if (idCache) {
     idCache.set(cacheKey, traktId);
   }
+
+  const logger = getLogger(deps);
+  logger.debug(`Trakt ID resolved: tmdbId=${tmdbId} → traktId=${traktId} duration=${Date.now() - startTime}ms`);
 
   return traktId;
 }
@@ -511,6 +562,7 @@ async function getTraktItemStatusImpl(deps = {}, input = {}) {
     return promiseCache.get(cacheKey);
   }
 
+  const startTime = Date.now();
   const statusPromise = (async () => {
     const traktId = await resolveTraktIdForLookup(deps, lookup);
     const history = await fetchHistoryStatusByTraktId(deps, normalizedType, traktId);
@@ -519,6 +571,10 @@ async function getTraktItemStatusImpl(deps = {}, input = {}) {
     if (cacheStore) {
       cacheStore.set(cacheKey, status);
     }
+
+    const logger = getLogger(deps);
+    const wasCached = cacheStore && cacheStore.has(cacheKey);
+    logger.debug(`Trakt status check complete: tmdbId=${lookup.tmdb_id} type=${normalizedType} history=${status.history} cached=${wasCached} duration=${Date.now() - startTime}ms`);
 
     return status;
   })().finally(() => {
